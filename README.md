@@ -338,7 +338,7 @@ Arguments (input schema):
 - `output_format` ("png" | "jpeg" | "webp", optional)
   - Output image format.
   - If omitted, the server treats output as PNG semantics.
-- `quality` ("auto" | "high" | "medium" | "low", default: "low")
+- `quality` ("auto" | "high" | "medium" | "low", default: "high")
 - `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1024")
 - `user` (string, optional)
   - User identifier forwarded to OpenAI for monitoring.

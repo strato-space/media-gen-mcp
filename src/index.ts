@@ -606,7 +606,7 @@ function buildImageToolResult(
     n: z.number().int().min(1).max(10).optional(),
     output_compression: z.number().int().min(0).max(100).optional(),
     output_format: z.enum(["png", "jpeg", "webp"]).optional(),
-    quality: z.enum(["auto", "high", "medium", "low"]).default("low"),
+    quality: z.enum(["auto", "high", "medium", "low"]).default("high"),
     size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024"),
     user: z.string().optional(),
     tool_result: z.enum(["resource_link", "image"]).default("resource_link")
@@ -749,7 +749,7 @@ function buildImageToolResult(
     mask: z.string().optional().describe("Optional absolute path, base64 string, or HTTP(S) URL for a mask image (png < 4MB, same dimensions as the first image). Fully transparent areas indicate where to edit."),
     model: z.literal("gpt-image-1").default("gpt-image-1"),
     n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
-    quality: z.enum(["auto", "high", "medium", "low"]).default("low").describe("Quality (high, medium, low) - only for gpt-image-1. Default: low."),
+    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low) - only for gpt-image-1. Default: high."),
     size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024").describe("Size of the generated images. Default: 1024x1024."),
     user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
     tool_result: z.enum(["resource_link", "image"]).default("resource_link")
@@ -928,6 +928,34 @@ function buildImageToolResult(
   // fetch-images: Fetch and process images from URLs or local files
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // Helper: resolve a source (URL or path) to an existing local file under
+  // MEDIA_GEN_DIRS, when possible. Used to reuse existing files (without
+  // creating copies) for fetch-images when no compression is requested.
+  function resolveSourceToLocalPathIfExisting(source: string): string | undefined {
+    if (isHttpUrl(source)) {
+      for (let i = 0; i < publicUrlPrefixes.length; i++) {
+        const prefixRaw = publicUrlPrefixes[i];
+        const root = normalizedBaseDirs[i];
+        if (!prefixRaw || !root) continue;
+        const prefix = prefixRaw.replace(/\/$/, "");
+        if (!source.startsWith(prefix + "/")) continue;
+        const relativeUrlPath = source.slice(prefix.length + 1);
+        if (!relativeUrlPath) continue;
+        const candidate = path.resolve(root, relativeUrlPath.split("/").join(path.sep));
+        if (!isPathInAllowedDirs(candidate)) continue;
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+      return undefined;
+    }
+
+    const candidate = resolvePathInPrimaryRoot(source);
+    if (!isPathInAllowedDirs(candidate)) return undefined;
+    if (!fs.existsSync(candidate)) return undefined;
+    return candidate;
+  }
+
   const fetchImagesSchema = z.object({
     sources: z.array(z.string()).min(1).max(20).optional()
       .describe("Array of image sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 images. Mutually exclusive with 'n'."),
@@ -1017,23 +1045,20 @@ function buildImageToolResult(
         const hasCompression = !!compressionOpts;
 
         const canReuseAll = !hasCompression && activeSources.every((source) => {
-          if (isHttpUrl(source)) {
+          const localPath = resolveSourceToLocalPathIfExisting(source);
+          if (!localPath) {
             return false;
           }
-          const resolvedSource = resolvePathInPrimaryRoot(source);
-          if (!isPathInAllowedDirs(resolvedSource)) {
-            return false;
-          }
-          const httpUrl = buildPublicUrlForFile(resolvedSource);
+          const httpUrl = buildPublicUrlForFile(localPath);
           return !!httpUrl;
         });
 
         if (canReuseAll) {
           const results = await Promise.allSettled(
             activeSources.map(async (source) => {
-              const resolvedSource = resolvePathInPrimaryRoot(source);
-              if (!isPathInAllowedDirs(resolvedSource)) {
-                throw new Error("Image path is outside allowed MEDIA_GEN_DIRS roots");
+              const resolvedSource = resolveSourceToLocalPathIfExisting(source);
+              if (!resolvedSource) {
+                throw new Error("Image source cannot be resolved to an allowed local path");
               }
               const image = await readAndProcessImage(resolvedSource);
               const fileUri = `file://${resolvedSource}`;
