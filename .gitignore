@@ -1,0 +1,15 @@
+node_modules/
+.env
+/dist
+/build
+/media
+.DS_Store
+.tsbuildinfo
+
+# Test directories (keep .gitkeep files)
+/input/*
+!/input/.gitkeep
+/output/*
+!/output/.gitkeep
+/sample/*
+!/sample/.gitkeep
