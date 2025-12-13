@@ -91,7 +91,7 @@ async function main() {
   });
 
   const client = new Client(
-    { name: "debug-client-raw", version: "0.3.0" },
+    { name: "debug-client-raw", version: "1.0.0" },
     { capabilities: {} },
   );
 

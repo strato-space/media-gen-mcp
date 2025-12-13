@@ -717,7 +717,7 @@ This package follows **SemVer**: `MAJOR.MINOR.PATCH` (x.y.z).
 - `MINOR` — new tools or backward-compatible additions (new optional params, new fields in responses).
 - `PATCH` — bug fixes and internal refactors with no intentional behavior change.
 
-While the major version is `0` (`0.y.z`), treat the **minor** version as the compatibility boundary (npm’s `^0.3.0` allows `0.3.x`, but not `0.4.0`).
+Since `1.0.0`, this project follows **standard SemVer rules**: breaking changes bump **MAJOR** (npm’s `^1.0.0` allows `1.x`, but not `2.0.0`).
 
 ### Dependency policy
 

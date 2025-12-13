@@ -7,7 +7,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [0.3.0] - 2025-12-13
+## [1.0.0] - 2025-12-13
 
 ### Added
 - `fetch-videos` tool to list local videos (last N) or download remote video URLs to disk and return `resource_link` items.

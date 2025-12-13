@@ -19,7 +19,7 @@ async function callFetchVideos(
   });
 
   const client = new Client(
-    { name: "fetch-videos-integration-test", version: "0.3.0" },
+    { name: "fetch-videos-integration-test", version: "1.0.0" },
     { capabilities: { tools: { listChanged: false } } },
   );
 
