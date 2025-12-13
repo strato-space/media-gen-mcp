@@ -13,7 +13,7 @@
 
 ---
 
-A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image generation/editing API plus OpenAI Videos (Sora) job tooling, with ongoing work towards DALL·E support.
+**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1`) and OpenAI Videos (Sora): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
 
 **Design principle:** spec-first, type-safe image tooling – strict OpenAI Images API + MCP compliance with fully static TypeScript types and flexible result placements/response formats for different clients.
 
