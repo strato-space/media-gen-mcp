@@ -1892,6 +1892,274 @@ const server = new McpServer({
     },
   );
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // fetch-videos: Fetch videos from URLs or local file paths
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchVideosSchema = z.object({
+    sources: z.array(z.string()).min(1).max(20).optional()
+      .describe("Array of video sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 videos. Mutually exclusive with 'n'."),
+    n: z.number().int().min(1).max(50).optional()
+      .describe("When set, returns the last N video files from the primary MEDIA_GEN_DIRS[0] directory (most recently modified first). Mutually exclusive with 'sources'."),
+    file: z.string().optional()
+      .describe("Base path for output files (when downloading from URLs), absolute or relative to the first MEDIA_GEN_DIRS entry. If multiple videos are downloaded, an index suffix is added."),
+  });
+
+  type FetchVideosArgs = z.input<typeof fetchVideosSchema>;
+
+  function inferVideoMimeTypeFromExt(extWithDot: string): string {
+    const ext = extWithDot.toLowerCase();
+    if (ext === ".mp4") return "video/mp4";
+    if (ext === ".webm") return "video/webm";
+    if (ext === ".mov") return "video/quicktime";
+    if (ext === ".m4v") return "video/x-m4v";
+    if (ext === ".mkv") return "video/x-matroska";
+    if (ext === ".avi") return "video/x-msvideo";
+    return "application/octet-stream";
+  }
+
+  function inferVideoExtFromUrlOrContentType(url: string, contentType: string | undefined): string {
+    const ct = normalizeContentType(contentType ?? null);
+    if (ct === "video/mp4" || ct === "application/mp4") return ".mp4";
+    if (ct === "video/webm") return ".webm";
+    if (ct === "video/quicktime") return ".mov";
+
+    const urlPath = (() => {
+      try {
+        return new URL(url).pathname;
+      } catch {
+        return url;
+      }
+    })();
+    const ext = path.extname(urlPath);
+    if (ext) return ext;
+    return ".mp4";
+  }
+
+  function buildIndexedOutputPath(basePath: string, idx: number, extWithDot: string, total: number): string {
+    const parsed = path.parse(basePath);
+    const baseName = parsed.name || parsed.base;
+    const ext = parsed.ext || extWithDot;
+    if (total > 1) {
+      return path.join(parsed.dir, `${baseName}_${idx + 1}${ext}`);
+    }
+    return path.join(parsed.dir, `${baseName}${ext}`);
+  }
+
+  server.registerTool(
+    "fetch-videos",
+    {
+      title: "Fetch Videos",
+      description:
+        "Fetch videos from URLs or local file paths. Returns MCP CallToolResult with resource_link items and structuredContent listing resolved files/URLs.",
+      inputSchema: fetchVideosSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: FetchVideosArgs) => {
+      try {
+        const { sources, n, file } = fetchVideosSchema.parse(args);
+
+        const hasSources = Array.isArray(sources) && sources.length > 0;
+        if (hasSources && typeof n === "number") {
+          throw new Error("'sources' and 'n' are mutually exclusive");
+        }
+
+        const videoExtensions = [".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi"];
+
+        let activeSources: string[] = [];
+        if (typeof n === "number") {
+          if (process.env["MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS"] !== "true") {
+            throw new Error("Fetching last N videos is disabled by MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS");
+          }
+
+          const root = primaryOutputDir;
+          const entries = await fs.promises.readdir(root, { withFileTypes: true });
+          const candidates: { path: string; mtimeMs: number }[] = [];
+
+          for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            if (!videoExtensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) continue;
+            const absPath = path.resolve(root, entry.name);
+            const stat = await fs.promises.stat(absPath);
+            candidates.push({ path: absPath, mtimeMs: stat.mtimeMs });
+          }
+
+          candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+          activeSources = candidates.slice(0, n).map((c) => c.path);
+
+          if (activeSources.length === 0) {
+            return {
+              content: [{ type: "text", text: `No videos found in ${root}` }],
+              isError: true,
+            };
+          }
+        } else if (hasSources) {
+          activeSources = sources;
+        } else {
+          throw new Error("Either 'sources' or 'n' must be provided");
+        }
+
+        const resolvedBasePath = file ? resolvePathInPrimaryRoot(file) : undefined;
+        if (resolvedBasePath) {
+          await validateOutputDirectory(resolvedBasePath);
+        }
+
+        const results = await Promise.allSettled(
+          activeSources.map(async (source, idx) => {
+            // 1) Prefer reuse of existing local files mapped from public URL prefixes (or direct paths)
+            const mappedLocal = resolveSourceToLocalPathIfExisting(source);
+            if (mappedLocal) {
+              const ext = path.extname(mappedLocal).toLowerCase();
+              if (!videoExtensions.includes(ext)) {
+                throw new Error(`Unsupported video file extension: ${ext || "<none>"}`);
+              }
+              const httpUrl = buildPublicUrlForFile(mappedLocal);
+              const fileUri = `file://${mappedLocal}`;
+              const uri = httpUrl ?? fileUri;
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri,
+                name: path.basename(mappedLocal),
+                mimeType: inferVideoMimeTypeFromExt(ext),
+              };
+              return {
+                source,
+                filePath: mappedLocal,
+                fileUri,
+                uri,
+                mimeType: resourceLink.mimeType ?? "application/octet-stream",
+                resourceLink,
+                downloaded: false,
+              };
+            }
+
+            // 2) Download from URL
+            if (!isHttpUrl(source)) {
+              const resolvedSource = resolvePathInPrimaryRoot(source);
+              if (!isPathInAllowedDirs(resolvedSource)) {
+                throw new Error("Video path is outside allowed MEDIA_GEN_DIRS roots");
+              }
+              const ext = path.extname(resolvedSource).toLowerCase();
+              if (!videoExtensions.includes(ext)) {
+                throw new Error(`Unsupported video file extension: ${ext || "<none>"}`);
+              }
+              await fs.promises.stat(resolvedSource);
+
+              const httpUrl = buildPublicUrlForFile(resolvedSource);
+              const fileUri = `file://${resolvedSource}`;
+              const uri = httpUrl ?? fileUri;
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri,
+                name: path.basename(resolvedSource),
+                mimeType: inferVideoMimeTypeFromExt(ext),
+              };
+              return {
+                source,
+                filePath: resolvedSource,
+                fileUri,
+                uri,
+                mimeType: resourceLink.mimeType ?? "application/octet-stream",
+                resourceLink,
+                downloaded: false,
+              };
+            }
+
+            if (!isUrlAllowedByEnv(source)) {
+              throw new Error("Video URL is not allowed by MEDIA_GEN_URLS");
+            }
+
+            const { buffer, contentType } = await fetchBinaryFromUrl(source);
+            const ext = inferVideoExtFromUrlOrContentType(source, contentType);
+            const outPath = resolvedBasePath
+              ? buildIndexedOutputPath(resolvedBasePath, idx, ext, activeSources.length)
+              : path.join(primaryOutputDir, `${buildDefaultOutputBaseName({ methodName: "fetch-videos", id: crypto.randomUUID() })}${ext}`);
+
+            await validateOutputDirectory(outPath);
+            await fs.promises.writeFile(outPath, buffer);
+
+            const httpUrl = buildPublicUrlForFile(outPath);
+            const fileUri = `file://${outPath}`;
+            const uri = httpUrl ?? fileUri;
+            const mimeType = normalizeContentType(contentType ?? null) ?? inferVideoMimeTypeFromExt(ext);
+
+            const resourceLink: ResourceLink = {
+              type: "resource_link",
+              uri,
+              name: path.basename(outPath),
+              mimeType,
+            };
+
+            return {
+              source,
+              filePath: outPath,
+              fileUri,
+              uri,
+              mimeType,
+              resourceLink,
+              downloaded: true,
+            };
+          }),
+        );
+
+        const ok: Array<{
+          source: string;
+          uri: string;
+          file: string;
+          mimeType: string;
+          name: string;
+          downloaded: boolean;
+        }> = [];
+        const content: ContentBlock[] = [];
+        const errors: string[] = [];
+
+        results.forEach((result, i) => {
+          if (result.status === "fulfilled") {
+            content.push(result.value.resourceLink);
+            ok.push({
+              source: result.value.source,
+              uri: result.value.uri,
+              file: result.value.fileUri,
+              mimeType: result.value.mimeType,
+              name: path.basename(result.value.filePath),
+              downloaded: result.value.downloaded,
+            });
+          } else {
+            const reason = result.reason;
+            const message = reason instanceof Error ? reason.message : String(reason);
+            errors.push(`[${i}] ${activeSources[i]}: ${message}`);
+          }
+        });
+
+        if (ok.length === 0) {
+          return {
+            content: [{ type: "text", text: `All fetches failed:\n${errors.join("\n")}` }],
+            isError: true,
+          };
+        }
+
+        if (errors.length > 0) {
+          content.push({ type: "text", text: `Errors (${errors.length}/${activeSources.length}):\n${errors.join("\n")}` });
+        }
+
+        const structured = {
+          data: ok,
+          ...(errors.length > 0 ? { errors } : {}),
+        };
+        content.push({ type: "text", text: JSON.stringify(structured, null, 2) });
+
+        log.child("fetch-videos").info("processed", { success: ok.length, total: activeSources.length });
+
+        return {
+          content,
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "fetch-videos");
+      }
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // test-tool: Debug MCP result format with predictable sample images
   // ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ test/
 | `openai-videos-delete` | Delete a video job | `videos.delete` |
 | `openai-videos-download-content` | Download job assets (video/thumbnail/spritesheet) | `videos.downloadContent` |
 | `fetch-images` | Fetch & compress images from URLs/files | None |
+| `fetch-videos` | Fetch/list videos from URLs/files | None |
 | `test-tool` | Debug MCP result format | None |
 
 ## Key Design Decisions
@@ -105,6 +106,7 @@ All strict checks are enabled in `tsconfig.json` and used by `npm run build` / `
 | `MEDIA_GEN_MCP_URL_PREFIXES` | No | Comma-separated public HTTPS prefixes matched positionally to `MEDIA_GEN_DIRS` for building public `resource_link` URLs. |
 | `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` | No | Enables `test-tool` and adds extra allowed read-only dirs (supports glob patterns). |
 | `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES` | No | If `true`, allows `fetch-images` to use `n` to return the last N files from `MEDIA_GEN_DIRS[0]`. |
+| `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS` | No | If `true`, allows `fetch-videos` to use `n` to return the last N video files from `MEDIA_GEN_DIRS[0]`. |
 | `MEDIA_GEN_MCP_DEBUG` | No | If `true`, enables verbose startup/config logging. |
 
 *Required for OpenAI tools.
@@ -174,13 +176,14 @@ npm run test         # Run vitest once
 npm run test:watch   # Watch mode
 ```
 
-**138 tests** across 6 files:
+**140 tests** across 7 files:
 - `compression.test.ts` (12) — image format detection, buffer processing, file I/O
 - `helpers.test.ts` (31) — URL/path validation, output resolution, result building
 - `env.test.ts` (19) — env parsing, glob handling, allowlist behavior
 - `logger.test.ts` (10) — log formatting and truncation safety
 - `schemas.test.ts` (64) — Zod validation for all tools, boundary tests
 - `fetch-images.integration.test.ts` (2) — end-to-end MCP tool call behavior
+- `fetch-videos.integration.test.ts` (2) — end-to-end MCP tool call behavior
 
 ### Manual Testing
 1. Use `test-tool` with sample images to verify result placement

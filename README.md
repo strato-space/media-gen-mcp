@@ -45,6 +45,9 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
 - **Fetch and process images from URLs or files**  
   `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
 
+- **Fetch videos from URLs or files**  
+  `fetch-videos` tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
+
 - **Mix and edit up to 16 images**  
   `openai-images-edit` accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for `gpt-image-1` image edits.
 
@@ -111,6 +114,7 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 | `logger` | 10 | Structured logging + truncation safety |
 | `schemas` | 64 | Zod schema validation for all tools, type inference |
 | `fetch-images` (integration) | 2 | End-to-end MCP tool call behavior |
+| `fetch-videos` (integration) | 2 | End-to-end MCP tool call behavior |
 
 **Test categories:**
 
@@ -118,7 +122,7 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 - **helpers** — `isHttpUrl`, `isAbsolutePath`, `isBase64Image`, `ensureDirectoryWritable`, `resolveOutputPath`, `getResultPlacement`, `buildResourceLinks`
 - **env** — config loading and validation for `MEDIA_GEN_*` / `MEDIA_GEN_MCP_*` settings
 - **logger** — truncation and error formatting behavior
-- **schemas** — validation for `openai-images-*`, `openai-videos-*`, `fetch-images`, `test-tool` inputs, boundary testing (prompt length, image count limits, path validation)
+- **schemas** — validation for `openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-tool` inputs, boundary testing (prompt length, image count limits, path validation)
 
 ```sh
 npm run test
@@ -128,7 +132,8 @@ npm run test
 # ✓ test/logger.test.ts (10 tests)
 # ✓ test/schemas.test.ts (64 tests)
 # ✓ test/fetch-images.integration.test.ts (2 tests)
-# Tests: 138 passed
+# ✓ test/fetch-videos.integration.test.ts (2 tests)
+# Tests: 140 passed
 ```
 
 ### Run directly via npx (no local clone)
@@ -611,6 +616,33 @@ Behavior notes:
 - Partial success: if some sources fail, successful images are still returned with errors listed in the response.
 - When `n` is provided, it is only honored when the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES` environment variable is set to `true`. Otherwise, the call fails with a validation error.
 - Sometimes an MCP client (for example, ChargeGPT) may not wait for a response from `media-gen-mcp` due to a timeout. In creative environments where you need to quickly retrieve the latest `openai-images-generate` / `openai-images-edit` outputs, you can use `fetch-images` with the `n` argument. When the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES=true` environment variable is set, `fetch-images` will return the last N files from `MEDIA_GEN_DIRS[0]` even if the original generation or edit operation timed out on the MCP client side.
+
+### fetch-videos
+
+Fetch videos from HTTP(S) URLs or local file paths.
+
+Arguments (input schema):
+
+- `sources` (string[], optional)
+  - Array of video sources: HTTP(S) URLs or file paths (absolute or relative to the first `MEDIA_GEN_DIRS` entry).
+  - Min: 1, Max: 20 videos.
+  - Mutually exclusive with `n`.
+- `n` (integer, optional)
+  - When set, returns the last N video files from the primary `MEDIA_GEN_DIRS[0]` directory.
+  - Files are sorted by modification time (most recently modified first).
+  - Mutually exclusive with `sources`.
+- `file` (string, optional)
+  - Base path for output files (used when downloading from URLs). If multiple videos are downloaded, an index suffix is added.
+
+Output:
+
+- `content`: one `resource_link` per resolved video, plus an optional error summary text block.
+- `structuredContent`: `{ data: [{ source, uri, file, mimeType, name, downloaded }], errors?: string[] }`.
+
+Behavior notes:
+
+- URL downloads are only allowed when the URL matches `MEDIA_GEN_URLS` (when set).
+- When `n` is provided, it is only honored when the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS` environment variable is set to `true`. Otherwise, the call fails with a validation error.
 
 ### test-tool
 
