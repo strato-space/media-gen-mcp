@@ -780,12 +780,19 @@ This MCP server exposes the following tools with annotation hints:
 |------|----------------|-------------------|------------------|-----------------|
 | **openai-images-generate** | `true` | `false` | `false` | `true` |
 | **openai-images-edit** | `true` | `false` | `false` | `true` |
+| **openai-videos-create** | `true` | `false` | `false` | `true` |
+| **openai-videos-remix** | `true` | `false` | `false` | `true` |
+| **openai-videos-list** | `true` | `false` | `false` | `true` |
+| **openai-videos-retrieve** | `true` | `false` | `false` | `true` |
+| **openai-videos-delete** | `true` | `false` | `false` | `true` |
+| **openai-videos-download-content** | `true` | `false` | `false` | `true` |
 | **fetch-images** | `true` | `false` | `false` | `true` |
+| **fetch-videos** | `true` | `false` | `false` | `true` |
 | **test-tool** | `true` | `false` | `false` | `true` |
 
 These hints help MCP clients understand that these tools:
 - invoke external APIs or read external resources (open world),
-- do not modify existing project files or user data; they only create new image files in configured output directories,
+- do not modify existing project files or user data; they only create new media files (images/videos) in configured output directories,
 - may produce different outputs on each call, even with the same inputs.
 
 Because `readOnlyHint` is set to `true` for most tools, MCP platforms (including chatgpt.com) can treat this server as logically read-only and usually will not show "this tool can modify your files" warnings.
@@ -800,16 +807,25 @@ media-gen-mcp/
 │   ├── index.ts              # MCP server entry point
 │   └── lib/
 │       ├── compression.ts    # Image compression (sharp)
+│       ├── env.ts            # Env parsing + allowlists (+ glob support)
 │       ├── helpers.ts        # URL/path validation, result building
+│       ├── logger.ts         # Structured logging + truncation helpers
 │       └── schemas.ts        # Zod schemas for all tools
 ├── test/
-│   ├── compression.test.ts   # 12 tests
-│   ├── helpers.test.ts       # 35 tests
-│   └── schemas.test.ts       # 39 tests
+│   ├── compression.test.ts             # 12 tests
+│   ├── env.test.ts                     # 19 tests
+│   ├── fetch-images.integration.test.ts# 2 tests
+│   ├── fetch-videos.integration.test.ts# 2 tests
+│   ├── helpers.test.ts                 # 31 tests
+│   ├── logger.test.ts                  # 10 tests
+│   └── schemas.test.ts                 # 64 tests
+├── debug/                    # Local debug helpers (MCP client scripts)
+├── plan/                     # Design notes / plans
 ├── dist/                     # Compiled output
 ├── tsconfig.json
 ├── vitest.config.ts
 ├── package.json
+├── CHANGELOG.md
 ├── README.md
 └── AGENTS.md
 ```
