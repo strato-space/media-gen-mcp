@@ -133,9 +133,9 @@ Per the OpenAI SDK types (`openai/resources/videos`):
 
 ---
 
-### 1.6 `openai-videos-download-content`
+### 1.6 `openai-videos-retrieve-content`
 
-**Purpose:** Download an asset for a completed job (`client.videos.downloadContent`, REST: `download_content`), write it under allowed `MEDIA_GEN_DIRS`, return an MCP `resource_link`.
+**Purpose:** Retrieve an asset for a completed job (`client.videos.downloadContent`, REST: `GET /videos/{video_id}/content`), write it under allowed `MEDIA_GEN_DIRS`, return an MCP `resource_link`.
 
 **Input schema:**
 - `video_id` (string, required)
@@ -163,7 +163,7 @@ Add schemas in `src/lib/schemas.ts` (mirroring existing image tool schema style)
 - `openaiVideosListSchema`
 - `openaiVideosRetrieveSchema`
 - `openaiVideosDeleteSchema`
-- `openaiVideosDownloadContentSchema`
+- `openaiVideosRetrieveContentSchema`
 
 And export input types:
 
@@ -172,7 +172,7 @@ And export input types:
 - `OpenAIVideosListArgs`
 - `OpenAIVideosRetrieveArgs`
 - `OpenAIVideosDeleteArgs`
-- `OpenAIVideosDownloadContentArgs`
+- `OpenAIVideosRetrieveContentArgs`
 
 Use these schemas in `src/index.ts` tool registrations so MCP `inputSchema` and validation stay in sync with tests.
 
@@ -183,7 +183,7 @@ Use these schemas in `src/index.ts` tool registrations so MCP `inputSchema` and 
 Follow the existing image tools’ “MCP + OpenAI schema” split:
 
 - `structuredContent` is always the **OpenAI API response type** for the endpoint:
-  - create/retrieve/remix/download → `Videos.Video`
+- create/retrieve/remix/content → `Videos.Video`
   - list → `VideosPage`
   - delete → `Videos.VideoDeleteResponse`
 - `content[]` carries the “client renderable” output:
@@ -237,13 +237,13 @@ Add a new section under “Tool signatures”:
 - `openai-videos-list`
 - `openai-videos-retrieve`
 - `openai-videos-delete`
-- `openai-videos-download-content`
+- `openai-videos-retrieve-content`
 
 Include a recommended workflow:
 
 1) `openai-videos-create` with `wait_for_completion=false` → get `video_id`  
 2) `openai-videos-retrieve` until `status=completed`  
-3) `openai-videos-download-content` to get an MP4 `resource_link`
+3) `openai-videos-retrieve-content` to get an MP4 `resource_link`
 
 ---
 

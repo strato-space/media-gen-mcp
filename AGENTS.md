@@ -41,7 +41,7 @@ test/
 | `openai-videos-list` | List video jobs | `videos.list` |
 | `openai-videos-retrieve` | Retrieve a video job | `videos.retrieve` |
 | `openai-videos-delete` | Delete a video job | `videos.delete` |
-| `openai-videos-download-content` | Download job assets (video/thumbnail/spritesheet) | `videos.downloadContent` |
+| `openai-videos-retrieve-content` | Retrieve job assets (video/thumbnail/spritesheet) | `videos.downloadContent` |
 | `fetch-images` | Fetch & compress images from URLs/files | None |
 | `fetch-videos` | Fetch/list videos from URLs/files | None |
 | `test-images` | Debug MCP result format | None |
@@ -83,6 +83,8 @@ When a tool writes outputs and you do not provide a `file` path, the default nam
 
 - Images and `fetch-images` use a generated UUID for `<id>`.
 - Videos use the OpenAI `video_id` for `<id>`.
+
+`fetch-images` and `fetch-videos` also support an `ids` input to retrieve existing local outputs by ID (matching filenames containing `_{id}_` or `_{id}.` under `MEDIA_GEN_DIRS[0]`). IDs are validated to avoid path/glob injection (no `..`, `*`, `?`, or slashes).
 
 ### 5. Optional sharp dependency
 The `sharp` library is an optional dependency for image compression and video `input_reference` preprocessing. If unavailable, compression features gracefully degrade and video `input_reference` auto-fit requires `input_reference_fit=match` (caller must provide correctly sized images).
@@ -189,7 +191,7 @@ npm run test:watch   # Watch mode
 1. Use `test-images` with sample images to verify result placement
 2. Test `tool_result` (`resource_link` vs `image`) and `response_format` (`url` vs `b64_json`) with your target MCP client
 3. Verify compression with large images (>800KB)
-4. For videos, validate `wait_for_completion` timeouts and `openai-videos-download-content` outputs (video/thumbnail/spritesheet)
+4. For videos, validate `wait_for_completion` timeouts and `openai-videos-retrieve-content` outputs (video/thumbnail/spritesheet)
 
 ### Integration Testing
 ```bash

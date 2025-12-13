@@ -57,6 +57,12 @@ const hexColorSchema = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, {
 });
 
 const nonEmptyString = z.string().refine((val) => val.trim().length > 0, { message: "Must be a non-empty string" });
+const safeIdSchema = z.string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, {
+    message: "Invalid id: only letters, digits, '_' and '-' are allowed",
+  });
 
 export const openaiVideosCreateSchema = z.object({
   prompt: z.string().max(32000).describe("Text prompt that describes the video to generate (max 32K chars)."),
@@ -120,7 +126,7 @@ export const openaiVideosDeleteSchema = z.object({
   video_id: nonEmptyString.describe("Video job id to delete."),
 });
 
-export const openaiVideosDownloadContentSchema = z.object({
+export const openaiVideosRetrieveContentSchema = z.object({
   video_id: nonEmptyString.describe("Video job id."),
   variant: videoVariantEnum.default("video").optional()
     .describe("Which downloadable asset to return (default: video)."),
@@ -220,6 +226,8 @@ export const fetchImagesSchema = z.object({
 export const fetchImagesClientSchema = z.object({
   sources: z.array(z.string()).min(1).max(20).optional()
     .describe("Array of image sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 images. Mutually exclusive with 'n'."),
+  ids: z.array(safeIdSchema).min(1).max(50).optional()
+    .describe("Array of image IDs to fetch by filename match (looks for filenames containing _{id}_ or _{id}. under the primary MEDIA_GEN_DIRS[0] directory). Mutually exclusive with 'sources' and 'n'."),
   n: z.number().int().min(1).max(50).optional()
     .describe("When set, returns the last N image files from the primary MEDIA_GEN_DIRS[0] directory (most recently modified first). Mutually exclusive with 'sources'."),
   compression: z.object({
@@ -263,4 +271,4 @@ export type OpenAIVideosRemixArgs = z.input<typeof openaiVideosRemixSchema>;
 export type OpenAIVideosListArgs = z.input<typeof openaiVideosListSchema>;
 export type OpenAIVideosRetrieveArgs = z.input<typeof openaiVideosRetrieveSchema>;
 export type OpenAIVideosDeleteArgs = z.input<typeof openaiVideosDeleteSchema>;
-export type OpenAIVideosDownloadContentArgs = z.input<typeof openaiVideosDownloadContentSchema>;
+export type OpenAIVideosRetrieveContentArgs = z.input<typeof openaiVideosRetrieveContentSchema>;

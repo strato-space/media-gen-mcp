@@ -32,15 +32,17 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
   Tool outputs are first-class [`CallToolResult`](https://github.com/modelcontextprotocol/spec/blob/main/schema/2025-11-25/schema.json) objects from the latest MCP schema, including:
   `content` items (`text`, `image`, `resource_link`), optional `structuredContent`, optional top-level `files`, and the `isError` flag for failures.
 
-- **Full gpt-image-1 parameter coverage (generate & edit)**  
-  - `openai-images-generate` mirrors the OpenAI Images *generate* API for `gpt-image-1` (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
+- **Full gpt-image-1 and sora-2/sora-2-pro parameters coverage (generate & edit)**  
+  - `openai-images-generate` mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1` (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
   - `openai-images-edit` mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1` (image, mask, `n`, quality, size, `user`).
 
-- **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / download)**  
-  - `openai-videos-create` starts a video job (`sora-2` / `sora-2-pro`) and can optionally wait for completion.
-  - `openai-videos-remix` creates a remix job from an existing `video_id`.
-  - `openai-videos-list`, `openai-videos-retrieve`, `openai-videos-delete` manage jobs.
-  - `openai-videos-download-content` downloads `video` / `thumbnail` / `spritesheet` assets to disk and returns MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
+- **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / content)**  
+  - `openai-videos-create` mirrors [`videos/create`](https://platform.openai.com/docs/api-reference/videos/create) and can optionally wait for completion.
+  - `openai-videos-remix` mirrors [`videos/remix`](https://platform.openai.com/docs/api-reference/videos/remix).
+  - `openai-videos-list` mirrors [`videos/list`](https://platform.openai.com/docs/api-reference/videos/list).
+  - `openai-videos-retrieve` mirrors [`videos/retrieve`](https://platform.openai.com/docs/api-reference/videos/retrieve).
+  - `openai-videos-delete` mirrors [`videos/delete`](https://platform.openai.com/docs/api-reference/videos/delete).
+  - `openai-videos-retrieve-content` mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
 
 - **Fetch and process images from URLs or files**  
   `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
@@ -570,9 +572,9 @@ Delete a video job (`videos.delete`).
 
 - `video_id` (string, required)
 
-### openai-videos-download-content
+### openai-videos-retrieve-content
 
-Download an asset for a completed job (`videos.downloadContent`, REST `videos.download_content`), write it under allowed `MEDIA_GEN_DIRS`, and return an MCP `resource_link`.
+Retrieve an asset for a completed job (`videos.downloadContent`, REST `GET /videos/{video_id}/content`), write it under allowed `MEDIA_GEN_DIRS`, and return an MCP `resource_link`.
 
 Arguments (input schema):
 
@@ -589,16 +591,22 @@ Arguments (input schema):
 - `sources` (string[], optional)
   - Array of image sources: HTTP(S) URLs or file paths (absolute or relative to the first `MEDIA_GEN_DIRS` entry).
   - Min: 1, Max: 20 images.
-  - Mutually exclusive with `n`.
+  - Mutually exclusive with `ids` and `n`.
+- `ids` (string[], optional)
+  - Array of image IDs to fetch by local filename match under the primary `MEDIA_GEN_DIRS[0]` directory.
+  - IDs must be safe (`[A-Za-z0-9_-]` only; no `..`, `*`, `?`, slashes).
+  - Matches filenames containing `_{id}_` or `_{id}.` (supports both single outputs and multi-output suffixes like `_1.png`).
+  - When `ids` is used, `compression` and `file` are not supported (no new files are created).
+  - Mutually exclusive with `sources` and `n`.
 - `n` (integer, optional)
   - When set, returns the last N image files from the primary `MEDIA_GEN_DIRS[0]` directory.
   - Files are sorted by modification time (most recently modified first).
-  - Mutually exclusive with `sources`.
+  - Mutually exclusive with `sources` and `ids`.
 - `compression` (object, optional)
   - `max_size` (integer, optional): Max dimension in pixels. Images larger than this will be resized.
   - `max_bytes` (integer, optional): Target max file size in bytes. Default: 819200 (800KB).
--  - `quality` (integer, optional): JPEG/WebP quality 1-100. Default: 85.
--  - `format` ("jpeg" | "png" | "webp", optional): Output format. Default: jpeg.
+  - `quality` (integer, optional): JPEG/WebP quality 1-100. Default: 85.
+  - `format` ("jpeg" | "png" | "webp", optional): Output format. Default: jpeg.
 - `response_format` ("url" | "b64_json", default: "url")
   - Response format: file/URL-based (`url`) or inline base64 (`b64_json`).
 - `tool_result` ("resource_link" | "image", default: "resource_link")
@@ -626,11 +634,17 @@ Arguments (input schema):
 - `sources` (string[], optional)
   - Array of video sources: HTTP(S) URLs or file paths (absolute or relative to the first `MEDIA_GEN_DIRS` entry).
   - Min: 1, Max: 20 videos.
-  - Mutually exclusive with `n`.
+  - Mutually exclusive with `ids` and `n`.
+- `ids` (string[], optional)
+  - Array of video IDs to fetch by local filename match under the primary `MEDIA_GEN_DIRS[0]` directory.
+  - IDs must be safe (`[A-Za-z0-9_-]` only; no `..`, `*`, `?`, slashes).
+  - Matches filenames containing `_{id}_` or `_{id}.` (supports both single outputs and multi-asset suffixes like `_thumbnail.webp`).
+  - When `ids` is used, `file` is not supported (no downloads; returns existing files).
+  - Mutually exclusive with `sources` and `n`.
 - `n` (integer, optional)
   - When set, returns the last N video files from the primary `MEDIA_GEN_DIRS[0]` directory.
   - Files are sorted by modification time (most recently modified first).
-  - Mutually exclusive with `sources`.
+  - Mutually exclusive with `sources` and `ids`.
 - `file` (string, optional)
   - Base path for output files (used when downloading from URLs). If multiple videos are downloaded, an index suffix is added.
 
@@ -785,7 +799,7 @@ This MCP server exposes the following tools with annotation hints:
 | **openai-videos-list** | `true` | `false` | `false` | `true` |
 | **openai-videos-retrieve** | `true` | `false` | `false` | `true` |
 | **openai-videos-delete** | `true` | `false` | `false` | `true` |
-| **openai-videos-download-content** | `true` | `false` | `false` | `true` |
+| **openai-videos-retrieve-content** | `true` | `false` | `false` | `true` |
 | **fetch-images** | `true` | `false` | `false` | `false` |
 | **fetch-videos** | `true` | `false` | `false` | `false` |
 | **test-images** | `true` | `false` | `false` | `false` |

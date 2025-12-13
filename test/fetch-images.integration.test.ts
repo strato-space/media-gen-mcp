@@ -102,4 +102,35 @@ describe("fetch-images integration", () => {
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
   });
+
+  it("fetches existing local images by ids", async () => {
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
+
+    const id1 = "abc123";
+    const id2 = "def456";
+    const first = path.join(tmpDir, `output_100_media-gen__openai-images-generate_${id1}.png`);
+    const second = path.join(tmpDir, `output_101_media-gen__openai-images-generate_${id2}_1.png`);
+
+    await fs.promises.writeFile(first, TINY_PNG_BUFFER);
+    await fs.promises.writeFile(second, TINY_PNG_BUFFER);
+
+    const result = await callFetchImages(
+      { ids: [id1, id2] },
+      {
+        MEDIA_GEN_DIRS: tmpDir,
+        MEDIA_GEN_MCP_URL_PREFIXES: "https://example.com/media",
+      },
+    );
+
+    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ url?: string }> } };
+    expect(res.isError).not.toBe(true);
+
+    const data = res.structuredContent?.data ?? [];
+    const urls = data.map((d) => d.url).filter((u): u is string => typeof u === "string");
+
+    expect(urls.some((u) => u.endsWith(path.basename(first)))).toBe(true);
+    expect(urls.some((u) => u.endsWith(path.basename(second)))).toBe(true);
+
+    await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  });
 });

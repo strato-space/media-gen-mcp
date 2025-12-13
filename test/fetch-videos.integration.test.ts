@@ -96,5 +96,36 @@ describe("fetch-videos integration", () => {
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
   });
-});
 
+  it("fetches existing local videos by ids", async () => {
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
+
+    const id1 = "video_123";
+    const id2 = "video_456";
+    const first = path.join(tmpDir, `output_100_media-gen__openai-videos-create_${id1}.mp4`);
+    const second = path.join(tmpDir, `output_101_media-gen__openai-videos-create_${id2}_video.mp4`);
+
+    const dummyMp4 = Buffer.from("00000018667479706D703432", "hex");
+    await fs.promises.writeFile(first, dummyMp4);
+    await fs.promises.writeFile(second, dummyMp4);
+
+    const result = await callFetchVideos(
+      { ids: [id1, id2] },
+      {
+        MEDIA_GEN_DIRS: tmpDir,
+        MEDIA_GEN_MCP_URL_PREFIXES: "https://example.com/media",
+      },
+    );
+
+    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ uri?: string }> } };
+    expect(res.isError).not.toBe(true);
+
+    const data = res.structuredContent?.data ?? [];
+    const uris = data.map((d) => d.uri).filter((u): u is string => typeof u === "string");
+
+    expect(uris.some((u) => u.endsWith(path.basename(first)))).toBe(true);
+    expect(uris.some((u) => u.endsWith(path.basename(second)))).toBe(true);
+
+    await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  });
+});

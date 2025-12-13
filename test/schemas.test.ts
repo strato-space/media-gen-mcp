@@ -7,7 +7,7 @@ import {
   openaiVideosListSchema,
   openaiVideosRetrieveSchema,
   openaiVideosDeleteSchema,
-  openaiVideosDownloadContentSchema,
+  openaiVideosRetrieveContentSchema,
   fetchImagesSchema,
   fetchImagesClientSchema,
   testImagesSchema,
@@ -290,9 +290,9 @@ describe("schemas module", () => {
     });
   });
 
-  describe("openaiVideosDownloadContentSchema (openai-videos-download-content)", () => {
+  describe("openaiVideosRetrieveContentSchema (openai-videos-retrieve-content)", () => {
     it("applies default variant and validates input", () => {
-      const result = openaiVideosDownloadContentSchema.safeParse({ video_id: "vid_123" });
+      const result = openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123" });
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.variant).toBe("video");
@@ -300,11 +300,11 @@ describe("schemas module", () => {
     });
 
     it("rejects invalid variant", () => {
-      expect(openaiVideosDownloadContentSchema.safeParse({ video_id: "vid_123", variant: "bad" }).success).toBe(false);
+      expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", variant: "bad" }).success).toBe(false);
     });
 
     it("rejects relative file path", () => {
-      expect(openaiVideosDownloadContentSchema.safeParse({ video_id: "vid_123", file: "./out" }).success).toBe(false);
+      expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", file: "./out" }).success).toBe(false);
     });
   });
 
@@ -388,7 +388,7 @@ describe("schemas module", () => {
     });
   });
 
-  describe("fetchImagesClientSchema (sources + n)", () => {
+  describe("fetchImagesClientSchema (sources + ids + n)", () => {
     it("validates sources array only", () => {
       const input: FetchImagesClientArgs = {
         sources: ["https://example.com/img1.png", "/tmp/local.png"],
@@ -401,6 +401,28 @@ describe("schemas module", () => {
         expect(result.data.tool_result).toBe("resource_link"); // default
         expect(result.data.n).toBeUndefined();
       }
+    });
+
+    it("validates ids array only", () => {
+      const input: FetchImagesClientArgs = {
+        ids: ["video_123", "1646515b-a0ec-49fb-b617-649614361b5e"],
+      };
+      const result = fetchImagesClientSchema.safeParse(input);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.ids?.length).toBe(2);
+      }
+    });
+
+    it("rejects unsafe ids", () => {
+      expect(fetchImagesClientSchema.safeParse({ ids: ["../etc/passwd"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: [".."] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id*"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id?"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id/1"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id\\1"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id.1"] }).success).toBe(false);
     });
 
     it("validates n only within bounds", () => {

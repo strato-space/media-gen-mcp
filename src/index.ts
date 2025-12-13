@@ -37,14 +37,14 @@ import {
   openaiVideosListSchema,
   openaiVideosRetrieveSchema,
   openaiVideosDeleteSchema,
-  openaiVideosDownloadContentSchema,
+  openaiVideosRetrieveContentSchema,
   type TestImagesArgs,
   type OpenAIVideosCreateArgs,
   type OpenAIVideosRemixArgs,
   type OpenAIVideosListArgs,
   type OpenAIVideosRetrieveArgs,
   type OpenAIVideosDeleteArgs,
-  type OpenAIVideosDownloadContentArgs,
+  type OpenAIVideosRetrieveContentArgs,
 } from "./lib/schemas.js";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -269,6 +269,55 @@ const localToolAnnotations = {
   idempotentHint: false,
   openWorldHint: false,
 } as const;
+
+const safeIdSchema = z.string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, {
+    message: "Invalid id: only letters, digits, '_' and '-' are allowed",
+  });
+
+function filenameMatchesId(filename: string, id: string): boolean {
+  const marker = `_${id}`;
+  const idx = filename.indexOf(marker);
+  if (idx === -1) return false;
+  const after = filename[idx + marker.length];
+  return after === "_" || after === "." || typeof after === "undefined";
+}
+
+async function resolveFilesByIds(opts: {
+  rootDir: string;
+  ids: string[];
+  allowedExtensions: string[];
+}): Promise<{ orderedFiles: string[]; missingIds: string[] }> {
+  const entries = await fs.promises.readdir(opts.rootDir, { withFileTypes: true });
+  const ids = Array.from(new Set(opts.ids));
+  const matchesById = new Map<string, string[]>();
+  for (const id of ids) matchesById.set(id, []);
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
+    const ext = path.extname(name).toLowerCase();
+    if (!opts.allowedExtensions.includes(ext)) continue;
+    for (const id of ids) {
+      if (!filenameMatchesId(name, id)) continue;
+      matchesById.get(id)!.push(path.resolve(opts.rootDir, name));
+      break;
+    }
+  }
+
+  const orderedFiles: string[] = [];
+  const missingIds: string[] = [];
+  for (const id of ids) {
+    const files = matchesById.get(id) ?? [];
+    files.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+    if (files.length === 0) missingIds.push(id);
+    orderedFiles.push(...files);
+  }
+
+  return { orderedFiles, missingIds };
+}
 
 // Shared types for image processing result (ImageData imported from compression.ts)
 interface ProcessedImagesResult {
@@ -1609,26 +1658,26 @@ const server = new McpServer({
   );
 
   server.registerTool(
-    "openai-videos-download-content",
+    "openai-videos-retrieve-content",
     {
-      title: "OpenAI Videos Download Content",
+      title: "OpenAI Videos Retrieve Content",
       description:
-        "Download a video asset (video/thumbnail/spritesheet) for a completed job, write it under MEDIA_GEN_DIRS, and return resource_link(s).",
-      inputSchema: openaiVideosDownloadContentSchema.shape,
+        "Retrieve a video asset (video/thumbnail/spritesheet) for a completed job, write it under MEDIA_GEN_DIRS, and return resource_link(s).",
+      inputSchema: openaiVideosRetrieveContentSchema.shape,
       annotations: openaiToolAnnotations,
     },
-    async (args: OpenAIVideosDownloadContentArgs) => {
+    async (args: OpenAIVideosRetrieveContentArgs) => {
       try {
-        const validated = openaiVideosDownloadContentSchema.parse(args);
-        const openai = getOpenAIVideosClient("openai-videos-download-content");
+        const validated = openaiVideosRetrieveContentSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-retrieve-content");
 
         const video = await openai.videos.retrieve(validated.video_id);
         if (video.status !== "completed") {
-          throw new Error(`Cannot download content: video status is ${video.status} (progress=${video.progress})`);
+          throw new Error(`Cannot retrieve content: video status is ${video.status} (progress=${video.progress})`);
         }
 
         const variant = (validated.variant ?? "video") as VideoDownloadVariant;
-        const basePath = resolveVideoBaseOutputPath(validated.file, "openai-videos-download-content", video.id);
+        const basePath = resolveVideoBaseOutputPath(validated.file, "openai-videos-retrieve-content", video.id);
         await validateOutputDirectory(basePath);
 
         const downloaded = await downloadVideoAssetToFile(openai, video.id, variant, basePath, false);
@@ -1642,7 +1691,7 @@ const server = new McpServer({
           structuredContent: video as unknown as Record<string, unknown>,
         };
       } catch (err) {
-        return buildErrorResult(err, "openai-videos-download-content");
+        return buildErrorResult(err, "openai-videos-retrieve-content");
       }
     },
   );
@@ -1682,6 +1731,8 @@ const server = new McpServer({
   const fetchImagesSchema = z.object({
     sources: z.array(z.string()).min(1).max(20).optional()
       .describe("Array of image sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 images. Mutually exclusive with 'n'."),
+    ids: z.array(safeIdSchema).min(1).max(50).optional()
+      .describe("Array of image IDs to fetch by filename match (looks for filenames containing _{id}_ or _{id}. under the primary MEDIA_GEN_DIRS[0] directory). Mutually exclusive with 'sources' and 'n'."),
     n: z.number().int().min(1).max(50).optional()
       .describe("When set, returns the last N image files from the primary MEDIA_GEN_DIRS[0] directory (most recently modified first). Mutually exclusive with 'sources'."),
     compression: z.object({
@@ -1714,16 +1765,20 @@ const server = new McpServer({
     },
     async (args: FetchImagesArgs) => {
       try {
-        const { sources, n, compression, tool_result = "resource_link", response_format, file } = fetchImagesSchema.parse(args);
+        const { sources, ids, n, compression, tool_result = "resource_link", response_format, file } = fetchImagesSchema.parse(args);
 
         const hasSources = Array.isArray(sources) && sources.length > 0;
-        if (hasSources && typeof n === "number") {
-          throw new Error("'sources' and 'n' are mutually exclusive");
-        }
+        const hasIds = Array.isArray(ids) && ids.length > 0;
+        const hasN = typeof n === "number";
+        if (hasSources && hasN) throw new Error("'sources' and 'n' are mutually exclusive");
+        if (hasSources && hasIds) throw new Error("'sources' and 'ids' are mutually exclusive");
+        if (hasIds && hasN) throw new Error("'ids' and 'n' are mutually exclusive");
+        if (hasIds && typeof file === "string") throw new Error("'file' is not supported when using 'ids' (no new files are created)");
+        if (hasIds && compression) throw new Error("'compression' is not supported when using 'ids' (returns existing files as-is)");
 
         let activeSources: string[] = [];
 
-        if (typeof n === "number") {
+        if (hasN) {
           if (process.env["MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES"] !== "true") {
             throw new Error("Fetching last N images is disabled by MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES");
           }
@@ -1750,10 +1805,81 @@ const server = new McpServer({
               isError: true,
             };
           }
+        } else if (hasIds) {
+          const root = primaryOutputDir;
+          const imageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+          const idList = ids ?? [];
+          const resolved = await resolveFilesByIds({ rootDir: root, ids: idList, allowedExtensions: imageExtensions });
+          activeSources = resolved.orderedFiles;
+          if (activeSources.length === 0) {
+            return {
+              content: [{ type: "text", text: `No images found for ids in ${root}` }],
+              isError: true,
+            };
+          }
+
+          const results = await Promise.allSettled(
+            activeSources.map(async (filePath) => {
+              const image = await readAndProcessImage(filePath);
+              const fileUri = `file://${filePath}`;
+              const httpUrl = buildPublicUrlForFile(filePath) ?? "";
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri: fileUri,
+                name: path.basename(filePath),
+                mimeType: image.mimeType,
+              };
+              return { image, fileUri, httpUrl, resourceLink };
+            }),
+          );
+
+          const images: ImageData[] = [];
+          const files: string[] = [];
+          const urls: string[] = [];
+          const resourceLinks: ResourceLink[] = [];
+          const errors: string[] = [];
+
+          if (resolved.missingIds.length > 0) {
+            errors.push(...resolved.missingIds.map((id) => `No images found for id: ${id}`));
+          }
+
+          results.forEach((result, i) => {
+            if (result.status === "fulfilled") {
+              images.push(result.value.image);
+              files.push(result.value.fileUri);
+              urls.push(result.value.httpUrl);
+              resourceLinks.push(result.value.resourceLink);
+            } else {
+              const reason = result.reason;
+              const message = reason instanceof Error ? reason.message : String(reason);
+              errors.push(`[${i}] ${activeSources[i]}: ${message}`);
+            }
+          });
+
+          if (images.length === 0) {
+            return {
+              content: [{ type: "text", text: `All fetches failed:\n${errors.join("\n")}` }],
+              isError: true,
+            };
+          }
+
+          const processedResult: ProcessedImagesResult = { files, urls, resourceLinks };
+          const revisedPromptItems: TextContent[] = errors.length > 0
+            ? [{ type: "text", text: `Errors (${errors.length}):\n${errors.join("\n")}` }]
+            : [];
+
+          return buildImageToolResult(
+            images,
+            processedResult,
+            revisedPromptItems,
+            "fetch-images",
+            tool_result,
+            response_format,
+          );
         } else if (hasSources) {
           activeSources = sources;
         } else {
-          throw new Error("Either 'sources' or 'n' must be provided");
+          throw new Error("Either 'sources', 'ids', or 'n' must be provided");
         }
 
         let compressionOpts: CompressionOptions | undefined;
@@ -1906,6 +2032,8 @@ const server = new McpServer({
   const fetchVideosSchema = z.object({
     sources: z.array(z.string()).min(1).max(20).optional()
       .describe("Array of video sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 videos. Mutually exclusive with 'n'."),
+    ids: z.array(safeIdSchema).min(1).max(50).optional()
+      .describe("Array of video IDs to fetch by filename match (looks for filenames containing _{id}_ or _{id}. under the primary MEDIA_GEN_DIRS[0] directory). Mutually exclusive with 'sources' and 'n'."),
     n: z.number().int().min(1).max(50).optional()
       .describe("When set, returns the last N video files from the primary MEDIA_GEN_DIRS[0] directory (most recently modified first). Mutually exclusive with 'sources'."),
     file: z.string().optional()
@@ -1964,17 +2092,21 @@ const server = new McpServer({
     },
     async (args: FetchVideosArgs) => {
       try {
-        const { sources, n, file } = fetchVideosSchema.parse(args);
+        const { sources, ids, n, file } = fetchVideosSchema.parse(args);
 
         const hasSources = Array.isArray(sources) && sources.length > 0;
-        if (hasSources && typeof n === "number") {
-          throw new Error("'sources' and 'n' are mutually exclusive");
-        }
+        const hasIds = Array.isArray(ids) && ids.length > 0;
+        const hasN = typeof n === "number";
+        if (hasSources && hasN) throw new Error("'sources' and 'n' are mutually exclusive");
+        if (hasSources && hasIds) throw new Error("'sources' and 'ids' are mutually exclusive");
+        if (hasIds && hasN) throw new Error("'ids' and 'n' are mutually exclusive");
+        if (hasIds && typeof file === "string") throw new Error("'file' is not supported when using 'ids' (no new files are created)");
 
         const videoExtensions = [".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi"];
 
         let activeSources: string[] = [];
-        if (typeof n === "number") {
+        let idLookupErrors: string[] = [];
+        if (hasN) {
           if (process.env["MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS"] !== "true") {
             throw new Error("Fetching last N videos is disabled by MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS");
           }
@@ -2000,10 +2132,22 @@ const server = new McpServer({
               isError: true,
             };
           }
+        } else if (hasIds) {
+          const root = primaryOutputDir;
+          const idList = ids ?? [];
+          const resolved = await resolveFilesByIds({ rootDir: root, ids: idList, allowedExtensions: videoExtensions });
+          activeSources = resolved.orderedFiles;
+          idLookupErrors = resolved.missingIds.map((id) => `No videos found for id: ${id}`);
+          if (activeSources.length === 0) {
+            return {
+              content: [{ type: "text", text: `No videos found for ids in ${root}` }],
+              isError: true,
+            };
+          }
         } else if (hasSources) {
           activeSources = sources;
         } else {
-          throw new Error("Either 'sources' or 'n' must be provided");
+          throw new Error("Either 'sources', 'ids', or 'n' must be provided");
         }
 
         const resolvedBasePath = file ? resolvePathInPrimaryRoot(file) : undefined;
@@ -2119,6 +2263,8 @@ const server = new McpServer({
         }> = [];
         const content: ContentBlock[] = [];
         const errors: string[] = [];
+
+        errors.push(...idLookupErrors);
 
         results.forEach((result, i) => {
           if (result.status === "fulfilled") {
