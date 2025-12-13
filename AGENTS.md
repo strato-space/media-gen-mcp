@@ -224,6 +224,7 @@ This server implements MCP 2025-11-25 specification:
 3. Follow existing code style (single-file, minimal abstractions)
 4. Document new environment variables in `env.sample`
 5. Update `AGENTS.md` when tools/env/tests change
+6. Update `CHANGELOG.md` for user-facing changes and version bumps
 
 ## License
 
