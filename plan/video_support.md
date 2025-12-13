@@ -244,3 +244,58 @@ Include a recommended workflow:
 1) `openai-videos-create` with `wait_for_completion=false` → get `video_id`  
 2) `openai-videos-retrieve` until `status=completed`  
 3) `openai-videos-download-content` to get an MP4 `resource_link`
+
+---
+
+## 7. Image/video size mismatch (common failure) + fix
+
+### What happens
+
+When `input_reference` is provided to `videos.create`, the Videos API may require the **input image dimensions to exactly match** the requested `size` (width × height). If they don’t match, the API can fail with errors like:
+
+- `400 Inpaint image must match the requested width and height`
+
+This is easy to hit because:
+
+- Videos sizes are fixed (e.g. `720x1280`, `1280x720`, `1024x1792`, `1792x1024`).
+- `openai-images-edit` only supports `1024x1024`, `1536x1024`, `1024x1536`, `auto` — so it **cannot** output an exact `720x1280` canvas for portrait workflows.
+
+### Recommended fix (server-side)
+
+Add optional **input pre-processing** to `openai-videos-create` and `openai-videos-remix` so the server can transform `input_reference` to the exact requested video size before uploading:
+
+**New input params (Zod)**
+
+- `input_reference_fit` (enum, optional, default: `"match"`)
+  - `"match"`: require exact dimensions; if mismatch, return a clear error explaining allowed video sizes and how to fix.
+  - `"cover"`: resize + **center-crop** to target size (fills the frame; may crop edges).
+  - `"contain"`: resize + **letterbox/pad** to target size (no crop; adds bars/padding).
+  - `"stretch"`: resize with distortion (last resort).
+- `input_reference_background` (optional, for `"contain"`, default: `"blur"`)
+  - `"blur"` (recommended), `"black"`, `"white"`, or a hex color.
+
+**Implementation approach**
+
+- Avoid data URLs for uploads when possible:
+  - Fetch URL → raw `Buffer`
+  - Local file → raw `Buffer`
+  - Base64/data URL → decode to `Buffer`
+- Use `sharp` (already optional dependency) to:
+  - Read image metadata (width/height)
+  - If `size` is set and dimensions mismatch:
+    - Apply `fit` strategy (cover/contain/stretch) to produce **exact** target size
+    - Encode to PNG (most compatible) and upload via `toFile(buffer, ...)`
+- If `sharp` is not available and a resize is needed, fail with a clear message:
+  - “Install sharp or provide an image that already matches the requested size.”
+
+### Fix for “Unable to process image bytes” (URL input_reference)
+
+If `input_reference` is a URL and the server converts it into a `data:image/...;base64,...` URL, ensure the `Content-Type` is sanitized (strip `; charset=...`) or bypass data URLs entirely by uploading raw bytes. Otherwise, the server can accidentally base64-decode the entire data URL string and send corrupt bytes to OpenAI, resulting in:
+
+- `400 Unable to process image bytes`
+
+### Workarounds (client-side, today)
+
+- Choose `size` that matches your image’s orientation (landscape vs portrait).
+- Pre-resize to the exact target dimensions before calling videos:
+  - `sharp` / `ffmpeg` / ImageMagick locally, then pass the local path as `input_reference`.
