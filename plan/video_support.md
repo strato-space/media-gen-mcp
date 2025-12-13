@@ -266,10 +266,10 @@ Add optional **input pre-processing** to `openai-videos-create` and `openai-vide
 
 **New input params (Zod)**
 
-- `input_reference_fit` (enum, optional, default: `"match"`)
+- `input_reference_fit` (enum, optional, default: `"contain"`)
   - `"match"`: require exact dimensions; if mismatch, return a clear error explaining allowed video sizes and how to fix.
   - `"cover"`: resize + **center-crop** to target size (fills the frame; may crop edges).
-  - `"contain"`: resize + **letterbox/pad** to target size (no crop; adds bars/padding).
+  - `"contain"`: resize + **letterbox/pad** to target size (no crop; adds bars/padding). Default.
   - `"stretch"`: resize with distortion (last resort).
 - `input_reference_background` (optional, for `"contain"`, default: `"blur"`)
   - `"blur"` (recommended), `"black"`, `"white"`, or a hex color.

@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   type ImageData,
   type CompressionOptions,
+  detectImageFormat,
   fetchAndProcessImage,
   readAndProcessImage,
 } from "./lib/compression.js";
@@ -160,7 +161,8 @@ async function fetchImageAsBase64(url: string, maxRedirects = 5): Promise<string
         // Follow redirect with decrement
         const redirectUrl = res.headers.location;
         if (redirectUrl) {
-          fetchImageAsBase64(redirectUrl, maxRedirects - 1).then(resolve).catch(reject);
+          const nextUrl = new URL(redirectUrl, url).toString();
+          fetchImageAsBase64(nextUrl, maxRedirects - 1).then(resolve).catch(reject);
           return;
         }
       }
@@ -168,13 +170,17 @@ async function fetchImageAsBase64(url: string, maxRedirects = 5): Promise<string
         reject(new Error(`Failed to fetch image: HTTP ${res.statusCode}`));
         return;
       }
-      const contentType = res.headers["content-type"] || "image/png";
+      const rawContentType = res.headers["content-type"];
+      const resolvedContentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType;
+      const sanitizedContentType = (resolvedContentType?.split(";")[0]?.trim().toLowerCase() || "").startsWith("image/")
+        ? (resolvedContentType?.split(";")[0]?.trim() ?? "image/png")
+        : "image/png";
       const chunks: Buffer[] = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
         const buffer = Buffer.concat(chunks);
         const base64 = buffer.toString("base64");
-        resolve(`data:${contentType};base64,${base64}`);
+        resolve(`data:${sanitizedContentType};base64,${base64}`);
       });
       res.on("error", reject);
     }).on("error", reject);
@@ -391,10 +397,269 @@ function sleep(ms: number): Promise<void> {
 }
 
 type VideoDownloadVariant = "video" | "thumbnail" | "spritesheet";
+type InputReferenceFit = "match" | "cover" | "contain" | "stretch";
+type InputReferenceBackground = "blur" | "black" | "white" | `#${string}`;
 
 function normalizeContentType(contentType: string | null): string | undefined {
   const raw = contentType?.split(";")[0]?.trim().toLowerCase();
   return raw && raw.length > 0 ? raw : undefined;
+}
+
+function normalizeImageMimeType(raw: string | undefined): string | undefined {
+  const normalized = raw?.split(";")[0]?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (!normalized.startsWith("image/")) return undefined;
+  return normalized;
+}
+
+function imageMimeToExt(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === "image/jpeg") return "jpg";
+  if (normalized === "image/jpg") return "jpg";
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  return normalized.split("/")[1] ?? "png";
+}
+
+function imageExtToMime(ext: string): string {
+  const normalized = ext.toLowerCase();
+  if (normalized === "jpg" || normalized === "jpeg") return "image/jpeg";
+  if (normalized === "png") return "image/png";
+  if (normalized === "webp") return "image/webp";
+  if (normalized === "gif") return "image/gif";
+  return "image/png";
+}
+
+function inferImageMimeFromFilePath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "image/png";
+}
+
+function parseHexColorToRgba(color: string): { r: number; g: number; b: number; alpha: number } {
+  const match = color.trim().match(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+  if (!match) {
+    throw new Error(`Invalid hex color: ${color}`);
+  }
+  const hex = match[1]!;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const alpha = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1;
+  return { r, g, b, alpha };
+}
+
+function parseBase64DataUrl(input: string): { mimeType: string | undefined; base64: string } | null {
+  if (!input.startsWith("data:")) return null;
+  const commaIndex = input.indexOf(",");
+  if (commaIndex === -1) return null;
+  const header = input.slice("data:".length, commaIndex);
+  const data = input.slice(commaIndex + 1);
+  const parts = header.split(";").map((p) => p.trim()).filter((p) => p.length > 0);
+  const mimeType = parts.length > 0 && parts[0]?.includes("/") ? parts[0] : undefined;
+  const isBase64 = parts.some((p) => p.toLowerCase() === "base64");
+  if (!isBase64) return null;
+  return { mimeType: mimeType ? mimeType.trim() : undefined, base64: data };
+}
+
+async function fetchBinaryFromUrl(url: string, maxRedirects = 5): Promise<{ buffer: Buffer; contentType?: string }> {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) {
+      reject(new Error("Too many redirects"));
+      return;
+    }
+    const protocol = url.startsWith("https://") ? https : http;
+    const req = protocol.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const redirectUrl = res.headers.location;
+        if (redirectUrl) {
+          const nextUrl = new URL(redirectUrl, url).toString();
+          fetchBinaryFromUrl(nextUrl, maxRedirects - 1).then(resolve).catch(reject);
+          return;
+        }
+      }
+      if (res.statusCode !== 200) {
+        reject(new Error(`Failed to fetch: HTTP ${res.statusCode}`));
+        return;
+      }
+      const rawContentType = res.headers["content-type"];
+      const contentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType;
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve({ buffer: Buffer.concat(chunks), contentType }));
+      res.on("error", reject);
+    }).on("error", reject);
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error(`Timeout fetching ${url}`));
+    });
+  });
+}
+
+function parseVideoSize(size: string): { width: number; height: number } {
+  const parts = size.split("x");
+  const width = Number(parts[0]);
+  const height = Number(parts[1]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`Invalid size: ${size}`);
+  }
+  return { width, height };
+}
+
+type SharpMetadata = { width?: number; height?: number };
+type SharpCompositeInput = { input: Buffer; gravity?: string };
+type SharpInstance = {
+  metadata: () => Promise<SharpMetadata>;
+  resize: (width: number, height: number, options?: Record<string, unknown>) => SharpInstance;
+  blur: (sigma?: number) => SharpInstance;
+  png: () => SharpInstance;
+  composite: (items: SharpCompositeInput[]) => SharpInstance;
+  toBuffer: () => Promise<Buffer>;
+};
+type SharpFactory = (input: Buffer) => SharpInstance;
+
+async function getSharpModule(): Promise<SharpFactory | null> {
+  try {
+    const sharpImport = await import("sharp");
+    const maybeDefault = (sharpImport as unknown as { default?: unknown }).default;
+    if (typeof maybeDefault === "function") return maybeDefault as unknown as SharpFactory;
+    if (typeof (sharpImport as unknown) === "function") return sharpImport as unknown as SharpFactory;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadImageBufferFromReference(
+  inputReference: string,
+  toolName: string,
+): Promise<{ buffer: Buffer; mimeType: string; ext: string }> {
+  if (isHttpUrl(inputReference)) {
+    if (!isUrlAllowedByEnv(inputReference)) {
+      throw new Error("input_reference URL is not allowed by MEDIA_GEN_URLS");
+    }
+    log.child(toolName).debug("fetching input_reference", { url: inputReference });
+    const { buffer, contentType } = await fetchBinaryFromUrl(inputReference);
+    const headerMime = normalizeImageMimeType(contentType);
+    const detectedFormat = await detectImageFormat(buffer);
+    const ext = imageMimeToExt(headerMime ?? imageExtToMime(detectedFormat));
+    const mimeType = headerMime ?? imageExtToMime(ext);
+    return { buffer, mimeType, ext };
+  }
+
+  if (isBase64Image(inputReference)) {
+    const parsed = parseBase64DataUrl(inputReference);
+    const mimeFromUrl = normalizeImageMimeType(parsed?.mimeType);
+    const base64 = (parsed ? parsed.base64 : inputReference).replace(/\s/g, "");
+    const buffer = Buffer.from(base64, "base64");
+    const detectedFormat = await detectImageFormat(buffer);
+    const ext = imageMimeToExt(mimeFromUrl ?? imageExtToMime(detectedFormat));
+    const mimeType = mimeFromUrl ?? imageExtToMime(ext);
+    return { buffer, mimeType, ext };
+  }
+
+  const resolved = resolvePathInPrimaryRoot(inputReference);
+  if (!isPathInAllowedDirs(resolved)) {
+    throw new Error("input_reference path is outside allowed MEDIA_GEN_DIRS roots");
+  }
+  const buffer = await fs.promises.readFile(resolved);
+  const detectedFormat = await detectImageFormat(buffer);
+  const ext = imageMimeToExt(imageExtToMime(detectedFormat));
+  const mimeType = imageExtToMime(ext);
+  return { buffer, mimeType, ext };
+}
+
+async function preprocessInputReferenceForVideo(
+  input: { buffer: Buffer; mimeType: string; ext: string },
+  targetSize: string,
+  fit: InputReferenceFit,
+  background: InputReferenceBackground,
+  toolName: string,
+): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+  const { width, height } = parseVideoSize(targetSize);
+
+  const sharp = await getSharpModule();
+  if (!sharp) {
+    if (fit === "match") {
+      return { buffer: input.buffer, mimeType: input.mimeType, filename: `input_reference.${input.ext}` };
+    }
+    throw new Error("sharp is required to resize/pad input_reference; install sharp or use input_reference_fit=match");
+  }
+
+  const meta = await sharp(input.buffer).metadata();
+  const srcW = meta.width;
+  const srcH = meta.height;
+
+  if (!srcW || !srcH) {
+    throw new Error("Unable to read input_reference dimensions");
+  }
+
+  const needsResize = srcW !== width || srcH !== height;
+
+  if (fit === "match") {
+    if (needsResize) {
+      throw new Error(
+        `input_reference is ${srcW}x${srcH} but requested video size is ${width}x${height}; set input_reference_fit=contain|cover|stretch to auto-fit`,
+      );
+    }
+    return { buffer: input.buffer, mimeType: input.mimeType, filename: `input_reference.${input.ext}` };
+  }
+
+  if (!needsResize) {
+    return { buffer: input.buffer, mimeType: input.mimeType, filename: `input_reference.${input.ext}` };
+  }
+
+  const targetName = `input_reference_${width}x${height}_${fit}.png`;
+
+  if (fit === "cover") {
+    const out = await sharp(input.buffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .png()
+      .toBuffer();
+    log.child(toolName).info("input_reference resized", { fit, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+    return { buffer: out, mimeType: "image/png", filename: targetName };
+  }
+
+  if (fit === "stretch") {
+    const out = await sharp(input.buffer)
+      .resize(width, height, { fit: "fill" })
+      .png()
+      .toBuffer();
+    log.child(toolName).info("input_reference resized", { fit, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+    return { buffer: out, mimeType: "image/png", filename: targetName };
+  }
+
+  // contain: pad/letterbox
+  if (background === "blur") {
+    const bg = await sharp(input.buffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .blur(50)
+      .png()
+      .toBuffer();
+    const fg = await sharp(input.buffer)
+      .resize(width, height, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+    const out = await sharp(bg)
+      .composite([{ input: fg, gravity: "centre" }])
+      .png()
+      .toBuffer();
+    log.child(toolName).info("input_reference resized", { fit, background, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+    return { buffer: out, mimeType: "image/png", filename: targetName };
+  }
+
+  const backgroundColor = background === "black" ? "#000000" : background === "white" ? "#FFFFFF" : background;
+  const rgba = parseHexColorToRgba(backgroundColor);
+  const out = await sharp(input.buffer)
+    .resize(width, height, { fit: "contain", background: rgba })
+    .png()
+    .toBuffer();
+  log.child(toolName).info("input_reference resized", { fit, background, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+  return { buffer: out, mimeType: "image/png", filename: targetName };
 }
 
 function inferVideoExtension(contentType: string | null, variant: VideoDownloadVariant): string {
@@ -972,33 +1237,19 @@ const server = new McpServer({
             if (!isPathInAllowedDirs(resolved)) {
               throw new Error("Image path is outside allowed MEDIA_GEN_DIRS roots");
             }
-            // File path: infer mime type from extension
-            const ext = resolved.split('.').pop()?.toLowerCase();
-            let mime = "image/png";
-            if (ext === "jpg" || ext === "jpeg") mime = "image/jpeg";
-            else if (ext === "webp") mime = "image/webp";
-            else if (ext === "png") mime = "image/png";
-            // else default to png
+            const mime = inferImageMimeFromFilePath(resolved);
             return await toFile(fs.createReadStream(resolved), undefined, { type: mime });
           } else {
             // Base64 or data URL
-            let base64 = input;
-            let mime = "image/png";
-            if (input.startsWith("data:image/")) {
-              // data URL
-              const match = input.match(/^data:(image\/\w+);base64,(.*)$/);
-              if (match && match.length >= 3) {
-                const mimeGroup = match[1];
-                const base64Group = match[2];
-                if (mimeGroup && base64Group) {
-                  mime = mimeGroup;
-                  base64 = base64Group;
-                }
-              }
-            }
+            const parsed = parseBase64DataUrl(input);
+            const mimeFromUrl = normalizeImageMimeType(parsed?.mimeType);
+            const base64 = (parsed ? parsed.base64 : input).replace(/\s/g, "");
             const buffer = Buffer.from(base64, "base64");
-            const [, subtype = "png"] = mime.split("/");
-            return await toFile(buffer, `input_${idx}.${subtype}`, { type: mime });
+            const detectedFormat = await detectImageFormat(buffer);
+            const detectedExt = imageMimeToExt(imageExtToMime(detectedFormat));
+            const mime = mimeFromUrl ?? imageExtToMime(detectedExt);
+            const ext = imageMimeToExt(mime);
+            return await toFile(buffer, `input_${idx}.${ext}`, { type: mime });
           }
         }
 
@@ -1085,6 +1336,8 @@ const server = new McpServer({
         const {
           prompt,
           input_reference,
+          input_reference_fit,
+          input_reference_background,
           model,
           seconds,
           size,
@@ -1100,50 +1353,19 @@ const server = new McpServer({
         const content: ContentBlock[] = [];
 
         let inputReferenceUploadable: Uploadable | undefined;
+        const effectiveSize = input_reference ? (size ?? ("720x1280" as const)) : size;
+
         if (input_reference) {
-          let resolvedInput = input_reference;
-          if (isHttpUrl(resolvedInput)) {
-            if (!isUrlAllowedByEnv(resolvedInput)) {
-              throw new Error("input_reference URL is not allowed by MEDIA_GEN_URLS");
-            }
-            log.child("openai-videos-create").debug("fetching input_reference from URL", { url: resolvedInput });
-            resolvedInput = await fetchImageAsBase64(resolvedInput);
-          }
-
-          // Helper to convert input (path or base64) to Uploadable
-          async function inputToUploadable(input: string): Promise<Uploadable> {
-            if (!isBase64Image(input)) {
-              const resolved = resolvePathInPrimaryRoot(input);
-              if (!isPathInAllowedDirs(resolved)) {
-                throw new Error("input_reference path is outside allowed MEDIA_GEN_DIRS roots");
-              }
-              const ext = resolved.split(".").pop()?.toLowerCase();
-              let mime = "image/png";
-              if (ext === "jpg" || ext === "jpeg") mime = "image/jpeg";
-              else if (ext === "webp") mime = "image/webp";
-              else if (ext === "png") mime = "image/png";
-              return await toFile(fs.createReadStream(resolved), undefined, { type: mime });
-            }
-
-            let base64 = input;
-            let mime = "image/png";
-            if (input.startsWith("data:image/")) {
-              const match = input.match(/^data:(image\/\\w+);base64,(.*)$/);
-              if (match && match.length >= 3) {
-                const mimeGroup = match[1];
-                const base64Group = match[2];
-                if (mimeGroup && base64Group) {
-                  mime = mimeGroup;
-                  base64 = base64Group;
-                }
-              }
-            }
-            const buffer = Buffer.from(base64, "base64");
-            const [, subtype = "png"] = mime.split("/");
-            return await toFile(buffer, `input_reference.${subtype}`, { type: mime });
-          }
-
-          inputReferenceUploadable = await inputToUploadable(resolvedInput);
+          const targetSize = size ?? ("720x1280" as const);
+          const loaded = await loadImageBufferFromReference(input_reference, "openai-videos-create");
+          const processed = await preprocessInputReferenceForVideo(
+            loaded,
+            targetSize,
+            (input_reference_fit ?? "contain") as InputReferenceFit,
+            (input_reference_background ?? "blur") as InputReferenceBackground,
+            "openai-videos-create",
+          );
+          inputReferenceUploadable = await toFile(processed.buffer, processed.filename, { type: processed.mimeType });
         }
 
         const createParams: Parameters<typeof openai.videos.create>[0] = {
@@ -1151,7 +1373,7 @@ const server = new McpServer({
           ...(inputReferenceUploadable ? { input_reference: inputReferenceUploadable } : {}),
           ...(model ? { model } : {}),
           ...(seconds ? { seconds } : {}),
-          ...(size ? { size } : {}),
+          ...(effectiveSize ? { size: effectiveSize } : {}),
         };
 
         const created = await openai.videos.create(createParams);

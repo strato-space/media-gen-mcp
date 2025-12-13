@@ -46,12 +46,26 @@ export type VideoSizeType = z.infer<typeof videoSizeEnum>;
 const videoVariantEnum = z.enum(["video", "thumbnail", "spritesheet"]);
 export type VideoVariantType = z.infer<typeof videoVariantEnum>;
 
+const inputReferenceFitEnum = z.enum(["match", "cover", "contain", "stretch"]);
+export type InputReferenceFitType = z.infer<typeof inputReferenceFitEnum>;
+
+const inputReferenceBackgroundEnum = z.enum(["blur", "black", "white"]);
+export type InputReferenceBackgroundType = z.infer<typeof inputReferenceBackgroundEnum>;
+
+const hexColorSchema = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, {
+  message: "Expected a hex color like #RRGGBB or #RRGGBBAA",
+});
+
 const nonEmptyString = z.string().refine((val) => val.trim().length > 0, { message: "Must be a non-empty string" });
 
 export const openaiVideosCreateSchema = z.object({
   prompt: z.string().max(32000).describe("Text prompt that describes the video to generate (max 32K chars)."),
   input_reference: nonEmptyString.optional()
     .describe("Optional image reference: HTTP(S) URL, base64 / data URL, or file path."),
+  input_reference_fit: inputReferenceFitEnum.default("contain").optional()
+    .describe("How to fit input_reference to the requested video size: match (require exact), cover (crop), contain (pad), stretch (distort). Default: contain."),
+  input_reference_background: z.union([inputReferenceBackgroundEnum, hexColorSchema]).default("blur").optional()
+    .describe("Padding background when input_reference_fit=contain: blur (default), black, white, or hex color (#RRGGBB/#RRGGBBAA)."),
   model: videoModelEnum.default("sora-2").optional()
     .describe("Video model to use (default: sora-2)."),
   seconds: videoSecondsEnum.optional()

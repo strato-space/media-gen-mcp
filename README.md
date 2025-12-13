@@ -495,6 +495,14 @@ Arguments (input schema):
 
 - `prompt` (string, required) — text prompt describing the video (max 32K chars).
 - `input_reference` (string, optional) — optional image reference (HTTP(S) URL, base64/data URL, or file path).
+- `input_reference_fit` ("match" | "cover" | "contain" | "stretch", default: "contain")
+  - How to fit `input_reference` to the requested video `size`:
+    - `match`: require exact dimensions (fails fast on mismatch)
+    - `cover`: resize + center-crop to fill
+    - `contain`: resize + pad/letterbox to fit (default)
+    - `stretch`: resize with distortion
+- `input_reference_background` ("blur" | "black" | "white" | "#RRGGBB" | "#RRGGBBAA", default: "blur")
+  - Padding background used when `input_reference_fit="contain"`.
 - `model` ("sora-2" | "sora-2-pro", default: "sora-2")
 - `seconds` ("4" | "8" | "12", optional)
 - `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)

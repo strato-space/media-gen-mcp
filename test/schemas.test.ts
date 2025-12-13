@@ -205,6 +205,8 @@ describe("schemas module", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.model).toBe("sora-2");
+        expect(result.data.input_reference_fit).toBe("contain");
+        expect(result.data.input_reference_background).toBe("blur");
         expect(result.data.wait_for_completion).toBe(false);
         expect(result.data.timeout_ms).toBe(300000);
         expect(result.data.poll_interval_ms).toBe(2000);
@@ -233,6 +235,16 @@ describe("schemas module", () => {
     it("rejects relative file path", () => {
       const result = openaiVideosCreateSchema.safeParse({ prompt: "test", file: "./out" });
       expect(result.success).toBe(false);
+    });
+
+    it("accepts hex padding background colors", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#112233" }).success).toBe(true);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#11223344" }).success).toBe(true);
+    });
+
+    it("rejects invalid input_reference_background", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "blue" }).success).toBe(false);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#12345" }).success).toBe(false);
     });
   });
 
