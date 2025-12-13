@@ -106,21 +106,29 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 | Module | Tests | Description |
 |--------|-------|-------------|
 | `compression` | 12 | Image format detection, buffer processing, file I/O |
-| `helpers` | 35 | URL/path validation, output resolution, result placement, resource links |
-| `schemas` | 39 | Zod schema validation for all 4 tools, type inference |
+| `helpers` | 31 | URL/path validation, output resolution, result placement, resource links |
+| `env` | 19 | Configuration parsing, env validation, defaults |
+| `logger` | 10 | Structured logging + truncation safety |
+| `schemas` | 64 | Zod schema validation for all tools, type inference |
+| `fetch-images` (integration) | 2 | End-to-end MCP tool call behavior |
 
 **Test categories:**
 
 - **compression** — `isCompressionAvailable`, `detectImageFormat`, `processBufferWithCompression`, `readAndProcessImage`
 - **helpers** — `isHttpUrl`, `isAbsolutePath`, `isBase64Image`, `ensureDirectoryWritable`, `resolveOutputPath`, `getResultPlacement`, `buildResourceLinks`
-- **schemas** — validation for `openai-images-generate`, `openai-images-edit`, `fetch-images`, `test-tool` inputs, boundary testing (prompt length, image count limits, path validation)
+- **env** — config loading and validation for `MEDIA_GEN_*` / `MEDIA_GEN_MCP_*` settings
+- **logger** — truncation and error formatting behavior
+- **schemas** — validation for `openai-images-*`, `openai-videos-*`, `fetch-images`, `test-tool` inputs, boundary testing (prompt length, image count limits, path validation)
 
 ```sh
 npm run test
 # ✓ test/compression.test.ts (12 tests)
-# ✓ test/helpers.test.ts (35 tests)
-# ✓ test/schemas.test.ts (39 tests)
-# Tests: 86 passed
+# ✓ test/helpers.test.ts (31 tests)
+# ✓ test/env.test.ts (19 tests)
+# ✓ test/logger.test.ts (10 tests)
+# ✓ test/schemas.test.ts (64 tests)
+# ✓ test/fetch-images.integration.test.ts (2 tests)
+# Tests: 138 passed
 ```
 
 ### Run directly via npx (no local clone)
@@ -665,6 +673,18 @@ Both scripts truncate large fields for readability:
 
 ## 🧩 Version policy
 
+### Semantic Versioning (SemVer)
+
+This package follows **SemVer**: `MAJOR.MINOR.PATCH` (x.y.z).
+
+- `MAJOR` — breaking changes (tool names, input schemas, output shapes).
+- `MINOR` — new tools or backward-compatible additions (new optional params, new fields in responses).
+- `PATCH` — bug fixes and internal refactors with no intentional behavior change.
+
+While the major version is `0` (`0.y.z`), treat the **minor** version as the compatibility boundary (npm’s `^0.2.0` allows `0.2.x`, but not `0.3.0`).
+
+### Dependency policy
+
 This repository aims to stay **closely aligned with current stable releases**:
 
 - **MCP SDK**: targeting the latest stable `@modelcontextprotocol/sdk` and schema.
@@ -716,7 +736,7 @@ This pattern provides:
 - **Runtime validation** — Zod `.parse()` ensures all inputs match the schema before processing.
 - **MCP SDK compatibility** — `inputSchema: schema.shape` provides the JSON Schema for tool registration.
 
-All four tools (`openai-images-generate`, `openai-images-edit`, `fetch-images`, `test-tool`) follow this pattern.
+All tools (`openai-images-*`, `openai-videos-*`, `fetch-images`, `test-tool`) follow this pattern.
 
 ---
 
