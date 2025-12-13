@@ -36,6 +36,12 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
   - `openai-images-generate` mirrors the OpenAI Images *generate* API for `gpt-image-1` (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
   - `openai-images-edit` mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1` (image, mask, `n`, quality, size, `user`).
 
+- **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / download)**  
+  - `openai-videos-create` starts a video job (`sora-2` / `sora-2-pro`) and can optionally wait for completion.
+  - `openai-videos-remix` creates a remix job from an existing `video_id`.
+  - `openai-videos-list`, `openai-videos-retrieve`, `openai-videos-delete` manage jobs.
+  - `openai-videos-download-content` downloads `video` / `thumbnail` / `spritesheet` assets to disk and returns MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
+
 - **Fetch and process images from URLs or files**  
   `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
 
