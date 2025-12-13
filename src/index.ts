@@ -1067,34 +1067,32 @@ function buildImageToolResult(
 }
 
 (async () => {
-const server = new McpServer({
-  name: "media-gen-mcp",
-  version: "0.2.0"
-}, {
+	const server = new McpServer({
+	  name: "media-gen-mcp",
+	  version: "0.3.0"
+	}, {
   capabilities: {
     tools: { listChanged: false }
   }
 });
 
   // Zod schema for openai-images-generate tool input
-  const openaiImagesGenerateBaseSchema = z.object({
-    prompt: z.string().max(32000),
-    background: z.enum(["transparent", "opaque", "auto"]).optional(),
-    model: z.literal("gpt-image-1").default("gpt-image-1"),
-    moderation: z.enum(["auto", "low"]).optional(),
-    n: z.number().int().min(1).max(10).optional(),
-    output_compression: z.number().int().min(0).max(100).optional(),
-    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
-    quality: z.enum(["auto", "high", "medium", "low"]).default("high"),
-    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024"),
-    user: z.string().optional(),
-    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
-      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-    response_format: z.enum(["url", "b64_json"]).default("url")
-      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
-    file: z.string().optional()
-      .describe("Path to save the image file, absolute or relative to the first MEDIA_GEN_DIRS entry (or the default root). If multiple images are generated (n > 1), an index will be appended (e.g., /path/to/image_1.png)."),
-  });
+	  const openaiImagesGenerateBaseSchema = z.object({
+	    prompt: z.string().max(32000),
+	    background: z.enum(["transparent", "opaque", "auto"]).optional(),
+	    model: z.literal("gpt-image-1").default("gpt-image-1"),
+	    moderation: z.enum(["auto", "low"]).optional(),
+	    n: z.number().int().min(1).max(10).optional(),
+	    output_compression: z.number().int().min(0).max(100).optional(),
+	    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
+	    quality: z.enum(["auto", "high", "medium", "low"]).default("high"),
+	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024"),
+	    user: z.string().optional(),
+	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
+	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
+	    response_format: z.enum(["url", "b64_json"]).default("url")
+	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+	  });
 
   // Full schema with refinement for validation inside the handler
   const openaiImagesGenerateSchema = openaiImagesGenerateBaseSchema;
@@ -1112,24 +1110,20 @@ const server = new McpServer({
     async (args: OpenAIImagesGenerateToolArgs, _extra: unknown) => {
       try {
         const openai = getOpenAIClient();
-        const {
-          prompt,
-          background,
-          model = "gpt-image-1",
-          moderation,
-          n,
-          output_compression,
-          output_format,
-          quality,
-          size,
-          user,
-          tool_result = "resource_link",
-          response_format = "url",
-          file: fileRaw,
-        } = openaiImagesGenerateSchema.parse(args);
-        const file: string | undefined = fileRaw;
-
-        await validateOutputDirectory(file);
+	        const {
+	          prompt,
+	          background,
+	          model = "gpt-image-1",
+	          moderation,
+	          n,
+	          output_compression,
+	          output_format,
+	          quality,
+	          size,
+	          user,
+	          tool_result = "resource_link",
+	          response_format = "url",
+	        } = openaiImagesGenerateSchema.parse(args);
 
         // Enforce: if background is 'transparent', output_format must be 'png' or 'webp'
         if (background === "transparent" && output_format && !["png", "webp"].includes(output_format)) {
@@ -1167,11 +1161,11 @@ const server = new McpServer({
             ? rawFormat
             : "png";
 
-        const generateData = (result.data ?? []) as ImageApiDataItem[];
-        const images = parseImageResponse(generateData, effectiveFormat);
+	        const generateData = (result.data ?? []) as ImageApiDataItem[];
+	        const images = parseImageResponse(generateData, effectiveFormat);
 
-        const revisedPromptItems = extractRevisedPrompts(generateData);
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai-images-generate");
+	        const revisedPromptItems = extractRevisedPrompts(generateData);
+	        const { effectiveFileOutput } = resolveOutputPath(images, response_format, undefined, "openai-images-generate");
 
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
@@ -1220,24 +1214,22 @@ const server = new McpServer({
   ]);
 
   // Base schema without refinement for server.tool signature
-  const openaiImagesEditBaseSchema = z.object({
-    image: imageFieldSchema.describe(
-      "Absolute image path, base64 string, or HTTP(S) URL to edit, or an array of such values (1-16 images).",
-    ),
-    prompt: z.string().max(32000).describe("A text description of the desired edit. Max 32000 chars."),
-    mask: z.string().optional().describe("Optional absolute path, base64 string, or HTTP(S) URL for a mask image (png < 4MB, same dimensions as the first image). Fully transparent areas indicate where to edit."),
-    model: z.literal("gpt-image-1").default("gpt-image-1"),
-    n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
-    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low) - only for gpt-image-1. Default: high."),
-    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024").describe("Size of the generated images. Default: 1024x1024."),
-    user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
-    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
-      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-    response_format: z.enum(["url", "b64_json"]).default("url")
-      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
-    file: z.string().optional()
-      .describe("Path to save the output image file, absolute or relative to the first MEDIA_GEN_DIRS entry. If n > 1, an index is appended."),
-  });
+	  const openaiImagesEditBaseSchema = z.object({
+	    image: imageFieldSchema.describe(
+	      "Absolute image path, base64 string, or HTTP(S) URL to edit, or an array of such values (1-16 images).",
+	    ),
+	    prompt: z.string().max(32000).describe("A text description of the desired edit. Max 32000 chars."),
+	    mask: z.string().optional().describe("Optional absolute path, base64 string, or HTTP(S) URL for a mask image (png < 4MB, same dimensions as the first image). Fully transparent areas indicate where to edit."),
+	    model: z.literal("gpt-image-1").default("gpt-image-1"),
+	    n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
+	    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low) - only for gpt-image-1. Default: high."),
+	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024").describe("Size of the generated images. Default: 1024x1024."),
+	    user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
+	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
+	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
+	    response_format: z.enum(["url", "b64_json"]).default("url")
+	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+	  });
 
   // Full schema with refinement for validation inside the handler
   const openaiImagesEditSchema = openaiImagesEditBaseSchema;
@@ -1296,11 +1288,8 @@ const server = new McpServer({
           throw new Error("Invalid 'mask' input: Must be a non-empty file path or a base64-encoded string.");
         }
 
-        const openai = getOpenAIClient();
-        const { prompt, model = "gpt-image-1", n, quality, size, user, tool_result = "resource_link", response_format = "url", file: fileRaw } = validatedArgs;
-        const file: string | undefined = fileRaw;
-
-        await validateOutputDirectory(file);
+	        const openai = getOpenAIClient();
+	        const { prompt, model = "gpt-image-1", n, quality, size, user, tool_result = "resource_link", response_format = "url" } = validatedArgs;
 
         // Helper to convert input (path or base64) to toFile
         async function inputToFile(input: string, idx = 0) {
@@ -1358,11 +1347,11 @@ const server = new McpServer({
         const editResult = result as unknown as ImageGenerateResult;
         const editData = (editResult.data ?? []) as ImageApiDataItem[];
 
-        // gpt-image-1 edit always returns png
-        const images = parseImageResponse(editData, "png");
+	        // gpt-image-1 edit always returns png
+	        const images = parseImageResponse(editData, "png");
 
-        const revisedPromptItems = extractRevisedPrompts(editData);
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai-images-edit");
+	        const revisedPromptItems = extractRevisedPrompts(editData);
+	        const { effectiveFileOutput } = resolveOutputPath(images, response_format, undefined, "openai-images-edit");
 
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
@@ -1405,20 +1394,19 @@ const server = new McpServer({
     async (args: OpenAIVideosCreateArgs, _extra: unknown) => {
       try {
         const validated = openaiVideosCreateSchema.parse(args);
-        const {
-          prompt,
-          input_reference,
-          input_reference_fit,
-          input_reference_background,
-          model,
-          seconds,
-          size,
-          wait_for_completion,
-          timeout_ms,
-          poll_interval_ms,
-          download_variants,
-          file,
-        } = validated;
+	        const {
+	          prompt,
+	          input_reference,
+	          input_reference_fit,
+	          input_reference_background,
+	          model,
+	          seconds,
+	          size,
+	          wait_for_completion,
+	          timeout_ms,
+	          poll_interval_ms,
+	          download_variants,
+	        } = validated;
 
         const openai = getOpenAIVideosClient("openai-videos-create");
 
@@ -1469,10 +1457,10 @@ const server = new McpServer({
           toolName: "openai-videos-create",
         });
 
-        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
-        const multipleVariants = variants.length > 1;
-        const basePath = resolveVideoBaseOutputPath(file, "openai-videos-create", finalVideo.id);
-        await validateOutputDirectory(basePath);
+	        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
+	        const multipleVariants = variants.length > 1;
+	        const basePath = resolveVideoBaseOutputPath(undefined, "openai-videos-create", finalVideo.id);
+	        await validateOutputDirectory(basePath);
 
         const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
         for (const variant of variants) {
@@ -1511,15 +1499,14 @@ const server = new McpServer({
     async (args: OpenAIVideosRemixArgs) => {
       try {
         const validated = openaiVideosRemixSchema.parse(args);
-        const {
-          video_id,
-          prompt,
-          wait_for_completion,
-          timeout_ms,
-          poll_interval_ms,
-          download_variants,
-          file,
-        } = validated;
+	        const {
+	          video_id,
+	          prompt,
+	          wait_for_completion,
+	          timeout_ms,
+	          poll_interval_ms,
+	          download_variants,
+	        } = validated;
 
         const openai = getOpenAIVideosClient("openai-videos-remix");
 
@@ -1545,10 +1532,10 @@ const server = new McpServer({
           toolName: "openai-videos-remix",
         });
 
-        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
-        const multipleVariants = variants.length > 1;
-        const basePath = resolveVideoBaseOutputPath(file, "openai-videos-remix", finalVideo.id);
-        await validateOutputDirectory(basePath);
+	        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
+	        const multipleVariants = variants.length > 1;
+	        const basePath = resolveVideoBaseOutputPath(undefined, "openai-videos-remix", finalVideo.id);
+	        await validateOutputDirectory(basePath);
 
         const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
         for (const variant of variants) {
@@ -1671,14 +1658,14 @@ const server = new McpServer({
         const validated = openaiVideosRetrieveContentSchema.parse(args);
         const openai = getOpenAIVideosClient("openai-videos-retrieve-content");
 
-        const video = await openai.videos.retrieve(validated.video_id);
-        if (video.status !== "completed") {
-          throw new Error(`Cannot retrieve content: video status is ${video.status} (progress=${video.progress})`);
-        }
+	        const video = await openai.videos.retrieve(validated.video_id);
+	        if (video.status !== "completed") {
+	          throw new Error(`Cannot retrieve content: video status is ${video.status} (progress=${video.progress})`);
+	        }
 
-        const variant = (validated.variant ?? "video") as VideoDownloadVariant;
-        const basePath = resolveVideoBaseOutputPath(validated.file, "openai-videos-retrieve-content", video.id);
-        await validateOutputDirectory(basePath);
+	        const variant = (validated.variant ?? "video") as VideoDownloadVariant;
+	        const basePath = resolveVideoBaseOutputPath(undefined, "openai-videos-retrieve-content", video.id);
+	        await validateOutputDirectory(basePath);
 
         const downloaded = await downloadVideoAssetToFile(openai, video.id, variant, basePath, false);
 

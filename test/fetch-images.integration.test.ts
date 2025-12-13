@@ -19,7 +19,7 @@ async function callFetchImages(
   });
 
   const client = new Client(
-    { name: "fetch-images-integration-test", version: "0.2.0" },
+    { name: "fetch-images-integration-test", version: "0.3.0" },
     { capabilities: { tools: { listChanged: false } } },
   );
 

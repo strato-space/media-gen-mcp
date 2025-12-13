@@ -92,7 +92,7 @@ async function main() {
   });
 
   const client = new Client(
-    { name: "debug-client", version: "0.2.0" },
+    { name: "debug-client", version: "0.3.0" },
     { capabilities: { tools: { listChanged: false } } },
   );
 

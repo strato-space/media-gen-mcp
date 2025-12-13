@@ -33,25 +33,24 @@ describe("schemas module", () => {
       }
     });
 
-    it("validates full input with all options", () => {
-      const input: OpenAIImagesGenerateArgs = {
-        prompt: "A beautiful sunset",
-        background: "transparent",
-        moderation: "low",
-        size: "1024x1024",
-        quality: "high",
-        n: 3,
-        output_format: "webp",
-        output_compression: 80,
-        tool_result: "resource_link",
-        response_format: "b64_json",
-        file: "/tmp/output.webp",
-        user: "user123",
-      };
-      const result = openaiImagesGenerateSchema.safeParse(input);
+	    it("validates full input with all options", () => {
+	      const input: OpenAIImagesGenerateArgs = {
+	        prompt: "A beautiful sunset",
+	        background: "transparent",
+	        moderation: "low",
+	        size: "1024x1024",
+	        quality: "high",
+	        n: 3,
+	        output_format: "webp",
+	        output_compression: 80,
+	        tool_result: "resource_link",
+	        response_format: "b64_json",
+	        user: "user123",
+	      };
+	      const result = openaiImagesGenerateSchema.safeParse(input);
 
-      expect(result.success).toBe(true);
-    });
+	      expect(result.success).toBe(true);
+	    });
 
     it("validates tool_result options", () => {
       expect(openaiImagesGenerateSchema.safeParse({ prompt: "test", tool_result: "resource_link" }).success).toBe(true);
@@ -95,27 +94,14 @@ describe("schemas module", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects relative file path", () => {
-      const input = { prompt: "test", file: "./output.png" };
-      const result = openaiImagesGenerateSchema.safeParse(input);
-
-      expect(result.success).toBe(false);
-    });
-
-    it("accepts absolute Unix path", () => {
-      const input = { prompt: "test", file: "/home/user/output.png" };
-      const result = openaiImagesGenerateSchema.safeParse(input);
-
-      expect(result.success).toBe(true);
-    });
-
-    it("accepts absolute Windows path", () => {
-      const input = { prompt: "test", file: "C:/Users/output.png" };
-      const result = openaiImagesGenerateSchema.safeParse(input);
-
-      expect(result.success).toBe(true);
-    });
-  });
+	    it("ignores legacy file field", () => {
+	      const result = openaiImagesGenerateSchema.safeParse({ prompt: "test", file: "./output.png" });
+	      expect(result.success).toBe(true);
+	      if (result.success) {
+	        expect((result.data as Record<string, unknown>)["file"]).toBeUndefined();
+	      }
+	    });
+	  });
 
   describe("openaiImagesEditSchema (openai-images-edit)", () => {
     it("validates single image input", () => {
@@ -232,9 +218,12 @@ describe("schemas module", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects relative file path", () => {
+    it("ignores legacy file field", () => {
       const result = openaiVideosCreateSchema.safeParse({ prompt: "test", file: "./out" });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>)["file"]).toBeUndefined();
+      }
     });
 
     it("accepts hex padding background colors", () => {
@@ -303,8 +292,12 @@ describe("schemas module", () => {
       expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", variant: "bad" }).success).toBe(false);
     });
 
-    it("rejects relative file path", () => {
-      expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", file: "./out" }).success).toBe(false);
+    it("ignores legacy file field", () => {
+      const result = openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", file: "./out" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>)["file"]).toBeUndefined();
+      }
     });
   });
 

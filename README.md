@@ -394,9 +394,6 @@ Arguments (input schema):
   - Controls `content[]` shape:
     - `"resource_link"` emits ResourceLink items (file/URL-based)
     - `"image"` emits base64 ImageContent blocks
-- `file` (string, optional)
-  - Path to save the image file, **absolute or relative** to the first `MEDIA_GEN_DIRS` entry (or the default root).
-  - When `n > 1`, an index suffix like `_1`, `_2` is appended to the filename.
 
 Behavior notes:
 
@@ -404,7 +401,7 @@ Behavior notes:
 - If the total size of all base64 images would exceed the configured payload
   threshold (default ~50MB via `MCP_MAX_CONTENT_BYTES`), the server
   automatically switches the **effective output mode** to file/URL-based and saves
-  images to `file` or to the first entry of `MEDIA_GEN_DIRS` (default: `/tmp/media-gen-mcp`).
+  images to the first entry of `MEDIA_GEN_DIRS` (default: `/tmp/media-gen-mcp`).
 - Even when you explicitly request `response_format: "b64_json"`, the server still writes
   the files to disk (for static hosting, caching, or later reuse). Exposure of
   file paths / URLs in the tool result then depends on `MEDIA_GEN_MCP_RESULT_PLACEMENT`
@@ -469,10 +466,6 @@ Arguments (input schema):
   - Controls `content[]` shape:
     - `"resource_link"` emits ResourceLink items (file/URL-based)
     - `"image"` emits base64 ImageContent blocks
-- `file` (string, optional)
-  - Path where edited images will be written, **absolute or relative** to the first `MEDIA_GEN_DIRS` entry.
-  - If multiple images are produced, an index suffix is appended before the
-    extension (e.g. `_1.png`, `_2.png`).
 
 Behavior notes:
 
@@ -527,8 +520,6 @@ Arguments (input schema):
 - `poll_interval_ms` (integer, default: 2000)
 - `download_variants` (string[], default: ["video"])
   - Allowed values: `"video" | "thumbnail" | "spritesheet"`.
-- `file` (string, optional)
-  - Base output path **(absolute)**. When multiple variants are requested, suffixes are added (e.g. `_video.mp4`).
 
 Output (MCP CallToolResult):
 
@@ -543,7 +534,7 @@ Arguments (input schema):
 
 - `video_id` (string, required)
 - `prompt` (string, required)
-- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants`, `file` — same semantics as `openai-videos-create`.
+- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants` — same semantics as `openai-videos-create`.
 
 ### openai-videos-list
 
@@ -580,7 +571,6 @@ Arguments (input schema):
 
 - `video_id` (string, required)
 - `variant` ("video" | "thumbnail" | "spritesheet", default: "video")
-- `file` (string, optional) — base output path **(absolute)**.
 
 ### fetch-images
 
@@ -727,7 +717,7 @@ This package follows **SemVer**: `MAJOR.MINOR.PATCH` (x.y.z).
 - `MINOR` — new tools or backward-compatible additions (new optional params, new fields in responses).
 - `PATCH` — bug fixes and internal refactors with no intentional behavior change.
 
-While the major version is `0` (`0.y.z`), treat the **minor** version as the compatibility boundary (npm’s `^0.2.0` allows `0.2.x`, but not `0.3.0`).
+While the major version is `0` (`0.y.z`), treat the **minor** version as the compatibility boundary (npm’s `^0.3.0` allows `0.3.x`, but not `0.4.0`).
 
 ### Dependency policy
 

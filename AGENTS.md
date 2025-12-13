@@ -77,7 +77,7 @@ Per MCP spec 5.2.6, a `TextContent` block with serialized JSON (URLs in `data[]`
 - Public URLs for `resource_link` are derived from `MEDIA_GEN_MCP_URL_PREFIXES` matched positionally to `MEDIA_GEN_DIRS`.
 
 ### 4. Output file naming
-When a tool writes outputs and you do not provide a `file` path, the default naming is:
+When a tool writes outputs, the default naming is:
 
 `output_<time_t>_media-gen__<tool>_<id>.<ext>`
 
@@ -85,6 +85,10 @@ When a tool writes outputs and you do not provide a `file` path, the default nam
 - Videos use the OpenAI `video_id` for `<id>`.
 
 `fetch-images` and `fetch-videos` also support an `ids` input to retrieve existing local outputs by ID (matching filenames containing `_{id}_` or `_{id}.` under `MEDIA_GEN_DIRS[0]`). IDs are validated to avoid path/glob injection (no `..`, `*`, `?`, or slashes).
+
+For output location overrides:
+- OpenAI tools always write under `MEDIA_GEN_DIRS[0]` (no `file` parameter).
+- `fetch-images` / `fetch-videos` can still accept `file` when downloading from URLs.
 
 ### 5. Optional sharp dependency
 The `sharp` library is an optional dependency for image compression and video `input_reference` preprocessing. If unavailable, compression features gracefully degrade and video `input_reference` auto-fit requires `input_reference_fit=match` (caller must provide correctly sized images).

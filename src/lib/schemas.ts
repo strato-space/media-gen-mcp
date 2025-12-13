@@ -88,9 +88,6 @@ export const openaiVideosCreateSchema = z.object({
 
   download_variants: z.array(videoVariantEnum).min(1).default(["video"]).optional()
     .describe("Which downloadable assets to fetch when completed (default: ['video'])."),
-  file: z.string().optional()
-    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
-    .describe("Base path for output files (absolute). Suffixes are added when multiple variants are requested."),
 });
 
 export const openaiVideosRemixSchema = z.object({
@@ -106,9 +103,6 @@ export const openaiVideosRemixSchema = z.object({
 
   download_variants: z.array(videoVariantEnum).min(1).default(["video"]).optional()
     .describe("Which downloadable assets to fetch when completed (default: ['video'])."),
-  file: z.string().optional()
-    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
-    .describe("Base path for output files (absolute). Suffixes are added when multiple variants are requested."),
 });
 
 export const openaiVideosListSchema = z.object({
@@ -130,12 +124,9 @@ export const openaiVideosRetrieveContentSchema = z.object({
   video_id: nonEmptyString.describe("Video job id."),
   variant: videoVariantEnum.default("video").optional()
     .describe("Which downloadable asset to return (default: video)."),
-  file: z.string().optional()
-    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
-    .describe("Output file path base (absolute). Extension is chosen based on content-type."),
 });
 
-// openai-images-generate base schema (without output/file for reuse)
+// openai-images-generate base schema (shared params)
 export const openaiImagesGenerateBaseSchema = z.object({
   prompt: z.string().max(32000).describe("Text prompt describing the desired image (max 32K chars)."),
   background: z.enum(["transparent", "opaque", "auto"]).optional()
@@ -162,13 +153,10 @@ export const openaiImagesGenerateBaseSchema = z.object({
     .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
 });
 
-// Full openai-images-generate schema with response_format and file
+// Full openai-images-generate schema with response_format
 export const openaiImagesGenerateSchema = openaiImagesGenerateBaseSchema.extend({
   response_format: responseFormatEnum.default("url")
     .describe("Response format: url (file/URL-based) or b64_json (inline base64). Default: url."),
-  file: z.string().optional()
-    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
-    .describe("Base path for output files. If multiple images, index suffix is added."),
 });
 
 // openai-images-edit base schema
@@ -199,9 +187,6 @@ export const openaiImagesEditBaseSchema = z.object({
 export const openaiImagesEditSchema = openaiImagesEditBaseSchema.extend({
   response_format: responseFormatEnum.default("url")
     .describe("Response format: url (file/URL-based) or b64_json (inline base64). Default: url."),
-  file: z.string().optional()
-    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
-    .describe("Base path for output files."),
 });
 
 // fetch-images schema

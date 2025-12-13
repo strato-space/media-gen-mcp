@@ -51,9 +51,6 @@ Per the OpenAI SDK types (`openai/resources/videos`):
 
 - `download_variants` (array enum, optional, default: `["video"]`)
   - Allowed values: `"video" | "thumbnail" | "spritesheet"`.
-- `file` (string, optional)
-  - Base output path (absolute or resolved relative to `MEDIA_GEN_DIRS[0]`, consistent with existing tools).
-  - If multiple variants are requested, suffix filenames (e.g. `_video.mp4`, `_thumbnail.png`, `_spritesheet.zip`).
 
 **Output:**
 
@@ -81,7 +78,6 @@ Per the OpenAI SDK types (`openai/resources/videos`):
 - `timeout_ms` (int, optional, default: `300000`) — same semantics as `openai-videos-create`.
 - `poll_interval_ms` (int, optional, default: `2000`) — same semantics as `openai-videos-create`.
 - `download_variants` (array enum, optional, default: `["video"]`) — same semantics as `openai-videos-create`.
-- `file` (string, optional) — same semantics as `openai-videos-create`.
 
 **Output:**
 
@@ -140,7 +136,6 @@ Per the OpenAI SDK types (`openai/resources/videos`):
 **Input schema:**
 - `video_id` (string, required)
 - `variant` (enum, optional, default: `"video"`) — `"video" | "thumbnail" | "spritesheet"`
-- `file` (string, optional) — base output path (same semantics as other tools)
 
 **Output:**
 - `structuredContent`: OpenAI `Videos.Video` (retrieve after download so `structuredContent` stays an OpenAI API type)
