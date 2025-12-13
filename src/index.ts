@@ -325,11 +325,27 @@ function parseImageResponse(data: ImageApiDataItem[], format: ImageFormat): Imag
 
 // Helper: determine effective output mode and file path
 // responseFormat: "url" -> file/URL-based output, "b64_json" -> inline base64
+function sanitizeForFilename(value: string): string {
+  // Keep only broadly safe filename characters.
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function nowTimeTSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function buildDefaultOutputBaseName(opts: { methodName: string; id: string; timestampSeconds?: number | undefined }): string {
+  const ts = opts.timestampSeconds ?? nowTimeTSeconds();
+  const method = sanitizeForFilename(opts.methodName);
+  const id = sanitizeForFilename(opts.id);
+  return `output_${ts}_media-gen__${method}_${id}`;
+}
+
 function resolveOutputPath(
   images: ImageData[],
   responseFormat: "url" | "b64_json",
   file: string | undefined,
-  toolPrefix: string,
+  methodName: string,
 ): { effectiveOutput: string; effectiveFileOutput: string } {
   const maxResponseSizeEnv = process.env["MCP_MAX_CONTENT_BYTES"];
   const MAX_RESPONSE_SIZE = maxResponseSizeEnv && !Number.isNaN(parseInt(maxResponseSizeEnv, 10))
@@ -352,10 +368,10 @@ function resolveOutputPath(
 
   // Always generate a file path (we write files even for base64 output)
   if (!effectiveFileOutput) {
-    const unique = crypto.randomUUID();
-    const timestamp = Date.now();
     const fallbackExt = images[0]?.ext ?? "png";
-    effectiveFileOutput = path.join(primaryOutputDir, `${toolPrefix}_${timestamp}_${unique}.${fallbackExt}`);
+    const unique = crypto.randomUUID();
+    const baseName = buildDefaultOutputBaseName({ methodName, id: unique });
+    effectiveFileOutput = path.join(primaryOutputDir, `${baseName}.${fallbackExt}`);
   }
 
   if (!isPathInAllowedDirs(effectiveFileOutput)) {
@@ -688,11 +704,11 @@ function inferMimeType(contentType: string | null, ext: string): string {
   return "application/octet-stream";
 }
 
-function resolveVideoBaseOutputPath(file: string | undefined, toolPrefix: string): string {
+function resolveVideoBaseOutputPath(file: string | undefined, methodName: string, id: string | undefined): string {
   if (file) return resolvePathInPrimaryRoot(file);
-  const unique = crypto.randomUUID();
-  const timestamp = Date.now();
-  return path.join(primaryOutputDir, `${toolPrefix}_${timestamp}_${unique}`);
+  const effectiveId = id && id.trim().length > 0 ? id : crypto.randomUUID();
+  const baseName = buildDefaultOutputBaseName({ methodName, id: effectiveId });
+  return path.join(primaryOutputDir, baseName);
 }
 
 function buildVariantOutputPath(
@@ -1099,7 +1115,7 @@ const server = new McpServer({
         const images = parseImageResponse(generateData, effectiveFormat);
 
         const revisedPromptItems = extractRevisedPrompts(generateData);
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai_image");
+        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai-images-generate");
 
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
@@ -1290,7 +1306,7 @@ const server = new McpServer({
         const images = parseImageResponse(editData, "png");
 
         const revisedPromptItems = extractRevisedPrompts(editData);
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai_image_edit");
+        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai-images-edit");
 
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
@@ -1399,7 +1415,7 @@ const server = new McpServer({
 
         const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
         const multipleVariants = variants.length > 1;
-        const basePath = resolveVideoBaseOutputPath(file, "openai_video");
+        const basePath = resolveVideoBaseOutputPath(file, "openai-videos-create", finalVideo.id);
         await validateOutputDirectory(basePath);
 
         const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
@@ -1475,7 +1491,7 @@ const server = new McpServer({
 
         const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
         const multipleVariants = variants.length > 1;
-        const basePath = resolveVideoBaseOutputPath(file, "openai_video_remix");
+        const basePath = resolveVideoBaseOutputPath(file, "openai-videos-remix", finalVideo.id);
         await validateOutputDirectory(basePath);
 
         const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
@@ -1605,7 +1621,7 @@ const server = new McpServer({
         }
 
         const variant = (validated.variant ?? "video") as VideoDownloadVariant;
-        const basePath = resolveVideoBaseOutputPath(validated.file, "openai_video_download");
+        const basePath = resolveVideoBaseOutputPath(validated.file, "openai-videos-download-content", video.id);
         await validateOutputDirectory(basePath);
 
         const downloaded = await downloadVideoAssetToFile(openai, video.id, variant, basePath, false);
@@ -1853,7 +1869,7 @@ const server = new McpServer({
           };
         }
 
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "fetch_images");
+        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "fetch-images");
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
         const revisedPromptItems: TextContent[] = errors.length > 0

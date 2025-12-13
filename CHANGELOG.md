@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+- Default output filenames now follow `output_<time_t>_media-gen__<tool>_<id>.<ext>` (images use a generated UUID; videos use the OpenAI `video_id`).
+
 ## [0.2.0] - 2025-12-13
 
 ### Added

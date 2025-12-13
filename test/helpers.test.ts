@@ -189,7 +189,7 @@ describe("helpers module", () => {
       const result = resolveOutputPath(mockImages, "url", undefined, "create", {
         outputDir: "/tmp",
       });
-      expect(result.effectiveFileOutput).toMatch(/^\/tmp\/create_\d+_[\w-]+\.png$/);
+      expect(result.effectiveFileOutput).toMatch(/^\/tmp\/output_\d+_media-gen__create_[\w-]+\.png$/);
     });
   });
 

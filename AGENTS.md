@@ -75,10 +75,18 @@ Per MCP spec 5.2.6, a `TextContent` block with serialized JSON (URLs in `data[]`
 - Remote downloads are restricted by `MEDIA_GEN_URLS` when set.
 - Public URLs for `resource_link` are derived from `MEDIA_GEN_MCP_URL_PREFIXES` matched positionally to `MEDIA_GEN_DIRS`.
 
-### 4. Optional sharp dependency
+### 4. Output file naming
+When a tool writes outputs and you do not provide a `file` path, the default naming is:
+
+`output_<time_t>_media-gen__<tool>_<id>.<ext>`
+
+- Images and `fetch-images` use a generated UUID for `<id>`.
+- Videos use the OpenAI `video_id` for `<id>`.
+
+### 5. Optional sharp dependency
 The `sharp` library is an optional dependency for image compression and video `input_reference` preprocessing. If unavailable, compression features gracefully degrade and video `input_reference` auto-fit requires `input_reference_fit=match` (caller must provide correctly sized images).
 
-### 5. Strict TypeScript
+### 6. Strict TypeScript
 All strict checks are enabled in `tsconfig.json` and used by `npm run build` / `npm run typecheck`:
 - `strict: true`
 - `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes`, `strictBindCallApply`, `strictPropertyInitialization`, `noImplicitThis`, `useUnknownInCatchVariables`, `alwaysStrict`

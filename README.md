@@ -53,7 +53,7 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
 
 - **Resource-aware file output with `resource_link`**  
   - Automatic switch from inline base64 to `file` when the total response size exceeds a safe threshold.
-  - Images are written to disk with GUID-based filenames and consistent extensions, and exposed to MCP clients as `resource_link` or `image` items in `content[]` depending on `tool_result`, with OpenAI ImagesResponse format in `structuredContent`.
+  - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients as `resource_link` or `image` items in `content[]` depending on `tool_result`, with OpenAI ImagesResponse format in `structuredContent`.
 
 - **Built-in test tool for MCP client debugging**  
   `test-tool` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
@@ -876,11 +876,11 @@ In short, this library:
 
 - **Configurable payload safeguard:** By default this server uses a ~50MB budget (52,428,800 bytes) for inline `content` to stay within typical MCP client limits. You can override this threshold by setting the `MCP_MAX_CONTENT_BYTES` environment variable to a higher (or lower) value.
 - **Auto-Switch to File Output:** If the total image base64 size exceeds the configured threshold, the tool automatically saves images to disk and returns file path(s) via `resource_link` instead of inline base64. This helps avoid client-side "payload too large" errors while still delivering full-resolution images.
-- **Default File Location:** If you do not specify a `file` path, images will be saved to `/tmp` (or the directory set by the `MEDIA_GEN_MCP_OUTPUT_DIR` environment variable) with a unique filename.
+- **Default File Location:** If you do not specify a `file` path, outputs are saved under `MEDIA_GEN_DIRS[0]` (default: `/tmp/media-gen-mcp`) using names like `output_<time_t>_media-gen__<tool>_<id>.<ext>`.
 - **Environment Variables:**
-  - `MEDIA_GEN_MCP_OUTPUT_DIR`: Set this to control where large images and file outputs are saved. Example: `export MEDIA_GEN_MCP_OUTPUT_DIR=/your/desired/dir`. This directory may coincide with your public static directory if you serve files directly from it.
+  - `MEDIA_GEN_DIRS`: Set this to control where outputs are saved. Example: `export MEDIA_GEN_DIRS=/your/desired/dir`. This directory may coincide with your public static directory if you serve files directly from it.
   - `MEDIA_GEN_MCP_URL_PREFIXES`: Optional comma-separated HTTPS prefixes for public URLs, matched positionally to `MEDIA_GEN_DIRS` entries. When set, the server builds public URLs as `<prefix>/<relative_path_inside_root>` and returns them alongside file paths (for example via `resource_link` URIs and `structuredContent.data[].url` when `response_format: "url"`). Example: `export MEDIA_GEN_MCP_URL_PREFIXES=https://media-gen.example.com/media,https://media-gen.example.com/samples`
-- **Best Practice:** For large or production images, always use file output and ensure your client is configured to handle file paths. Configure `MEDIA_GEN_DIRS` and (optionally) `MEDIA_GEN_MCP_URL_PREFIXES` to serve images via a public web server (e.g., nginx).
+  - **Best Practice:** For large or production images, always use file output and ensure your client is configured to handle file paths. Configure `MEDIA_GEN_DIRS` and (optionally) `MEDIA_GEN_MCP_URL_PREFIXES` to serve images via a public web server (e.g., nginx).
 
 ---
 
