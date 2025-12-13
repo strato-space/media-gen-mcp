@@ -182,14 +182,14 @@ npm run test         # Run vitest once
 npm run test:watch   # Watch mode
 ```
 
-**140 tests** across 7 files:
+**142 tests** across 7 files:
 - `compression.test.ts` (12) — image format detection, buffer processing, file I/O
 - `helpers.test.ts` (31) — URL/path validation, output resolution, result building
 - `env.test.ts` (19) — env parsing, glob handling, allowlist behavior
 - `logger.test.ts` (10) — log formatting and truncation safety
 - `schemas.test.ts` (64) — Zod validation for all tools, boundary tests
-- `fetch-images.integration.test.ts` (2) — end-to-end MCP tool call behavior
-- `fetch-videos.integration.test.ts` (2) — end-to-end MCP tool call behavior
+- `fetch-images.integration.test.ts` (3) — end-to-end MCP tool call behavior
+- `fetch-videos.integration.test.ts` (3) — end-to-end MCP tool call behavior
 
 ### Manual Testing
 1. Use `test-images` with sample images to verify result placement
