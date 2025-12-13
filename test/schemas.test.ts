@@ -10,14 +10,14 @@ import {
   openaiVideosDownloadContentSchema,
   fetchImagesSchema,
   fetchImagesClientSchema,
-  testToolSchema,
+  testImagesSchema,
   compressionSchema,
   type OpenAIImagesGenerateArgs,
   type OpenAIImagesEditArgs,
   type OpenAIVideosCreateArgs,
   type FetchImagesArgs,
   type FetchImagesClientArgs,
-  type TestToolArgs,
+  type TestImagesArgs,
 } from "../src/lib/schemas.js";
 
 describe("schemas module", () => {
@@ -439,9 +439,9 @@ describe("schemas module", () => {
     });
   });
 
-  describe("testToolSchema", () => {
+  describe("testImagesSchema", () => {
     it("validates empty input (all optional)", () => {
-      const result = testToolSchema.safeParse({});
+      const result = testImagesSchema.safeParse({});
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -451,19 +451,19 @@ describe("schemas module", () => {
     });
 
     it("validates tool_result options", () => {
-      expect(testToolSchema.safeParse({ tool_result: "resource_link" }).success).toBe(true);
-      expect(testToolSchema.safeParse({ tool_result: "image" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ tool_result: "resource_link" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ tool_result: "image" }).success).toBe(true);
     });
 
     it("rejects invalid tool_result values", () => {
-      expect(testToolSchema.safeParse({ tool_result: "invalid" }).success).toBe(false);
-      expect(testToolSchema.safeParse({ tool_result: "content" }).success).toBe(false);
-      expect(testToolSchema.safeParse({ tool_result: "api" }).success).toBe(false);
+      expect(testImagesSchema.safeParse({ tool_result: "invalid" }).success).toBe(false);
+      expect(testImagesSchema.safeParse({ tool_result: "content" }).success).toBe(false);
+      expect(testImagesSchema.safeParse({ tool_result: "api" }).success).toBe(false);
     });
 
     it("validates response_format options", () => {
-      expect(testToolSchema.safeParse({ response_format: "b64_json" }).success).toBe(true);
-      expect(testToolSchema.safeParse({ response_format: "url" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ response_format: "b64_json" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ response_format: "url" }).success).toBe(true);
     });
   });
 
@@ -552,12 +552,12 @@ describe("schemas module", () => {
       expect(fetchImagesClientSchema.safeParse(args).success).toBe(true);
     });
 
-    it("TestToolArgs type matches schema", () => {
-      const args: TestToolArgs = {
+    it("TestImagesArgs type matches schema", () => {
+      const args: TestImagesArgs = {
         tool_result: "image",
         response_format: "b64_json",
       };
-      expect(testToolSchema.safeParse(args).success).toBe(true);
+      expect(testImagesSchema.safeParse(args).success).toBe(true);
     });
   });
 });

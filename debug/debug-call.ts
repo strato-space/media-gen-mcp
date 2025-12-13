@@ -84,7 +84,7 @@ async function main() {
     command: "tsx",
     args: ["src/index.ts"],
     // наследуем текущее окружение и явно пробрасываем MEDIA_GEN_MCP_TEST_SAMPLE_DIR,
-    // чтобы test-tool был включён и использовал локальные sample-изображения
+    // чтобы test-images был включён и использовал локальные sample-изображения
     env: {
       ...(process.env as Record<string, string>),
       MEDIA_GEN_MCP_TEST_SAMPLE_DIR: sampleDir,
@@ -101,7 +101,7 @@ async function main() {
   const { tool_result, response_format } = parseCliArgs(process.argv.slice(2));
 
   const res = await client.callTool({
-    name: "test-tool",
+    name: "test-images",
     arguments: {
       tool_result,
       response_format,

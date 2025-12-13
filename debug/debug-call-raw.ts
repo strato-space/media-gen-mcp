@@ -105,7 +105,7 @@ async function main() {
     {
       method: "tools/call",
       params: {
-        name: "test-tool",
+        name: "test-images",
         arguments: {
           tool_result,
           response_format,

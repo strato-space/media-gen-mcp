@@ -12,6 +12,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 - Default output filenames now follow `output_<time_t>_media-gen__<tool>_<id>.<ext>` (images use a generated UUID; videos use the OpenAI `video_id`).
+- Renamed `test-tool` to `test-images`.
+- Tool annotations: `openWorldHint=false` for `fetch-images`, `fetch-videos`, and `test-images`.
 
 ## [0.2.0] - 2025-12-13
 
@@ -31,4 +33,4 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 - Initial MCP server with OpenAI Images tooling (`openai-images-generate`, `openai-images-edit`).
 - `fetch-images` tool for URL/file ingestion with optional compression and MCP-friendly outputs.
-- `test-tool` for validating MCP output shapes across different clients.
+- `test-images` for validating MCP output shapes across different clients.

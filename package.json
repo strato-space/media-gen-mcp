@@ -40,8 +40,8 @@
     "test:watch": "vitest",
     "ci": "npm run lint && npm run typecheck && npm run test && npm run build",
     "restart": "npm run ci && systemctl restart mcp@media-gen",
-    "test-tool": "tsx debug/debug-call.ts",
-    "test-tool:raw": "tsx debug/debug-call-raw.ts"
+    "test-images": "tsx debug/debug-call.ts",
+    "test-images:raw": "tsx debug/debug-call-raw.ts"
   },
   "bin": {
     "media-gen-mcp": "dist/index.js"

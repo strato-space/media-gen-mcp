@@ -21,7 +21,7 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
 - **Edit images** (inpainting, outpainting, compositing) from 1 up to 16 images at once, with advanced prompt control.
 - **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
 - **Fetch & compress images** from HTTP(S) URLs or local file paths with smart size/quality optimization.
-- **Debug MCP output shapes** with a test tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
+- **Debug MCP output shapes** with a `test-images` tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
 - **Integrates with**: [fast-agent](https://github.com/strato-space/fast-agent), [Windsurf](https://windsurf.com), [Claude Desktop](https://www.anthropic.com/claude/desktop), [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com/), and any MCP-compatible client.
 
 ---
@@ -58,8 +58,8 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
   - Automatic switch from inline base64 to `file` when the total response size exceeds a safe threshold.
   - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients as `resource_link` or `image` items in `content[]` depending on `tool_result`, with OpenAI ImagesResponse format in `structuredContent`.
 
-- **Built-in test tool for MCP client debugging**  
-  `test-tool` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
+- **Built-in test-images tool for MCP client debugging**  
+  `test-images` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
 
 - **Structured MCP error handling**  
   All tool errors (validation, OpenAI API failures, I/O) are returned as MCP errors with
@@ -122,7 +122,7 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 - **helpers** — `isHttpUrl`, `isAbsolutePath`, `isBase64Image`, `ensureDirectoryWritable`, `resolveOutputPath`, `getResultPlacement`, `buildResourceLinks`
 - **env** — config loading and validation for `MEDIA_GEN_*` / `MEDIA_GEN_MCP_*` settings
 - **logger** — truncation and error formatting behavior
-- **schemas** — validation for `openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-tool` inputs, boundary testing (prompt length, image count limits, path validation)
+- **schemas** — validation for `openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-images` inputs, boundary testing (prompt length, image count limits, path validation)
 
 ```sh
 npm run test
@@ -251,10 +251,10 @@ Field list and limits are configured in `src/lib/logger.ts` via
 ### Security and local file access
 
 - **Allowed directories**: All tools are restricted to paths matching `MEDIA_GEN_DIRS`. If unset, defaults to `/tmp/media-gen-mcp` (or `%TEMP%/media-gen-mcp` on Windows).
-- **Test samples**: `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` adds a directory to the allowlist and enables the test tool.
+- **Test samples**: `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` adds a directory to the allowlist and enables the `test-images` tool.
 - **Local reads**: `fetch-images` accepts file paths (absolute or relative). Relative paths are resolved against the first `MEDIA_GEN_DIRS` entry and must still match an allowed pattern.
 - **Remote reads**: HTTP(S) fetches are filtered by `MEDIA_GEN_URLS` patterns. Empty = allow all.
-- **Writes**: `openai-images-generate`, `openai-images-edit`, and `fetch-images` write under the first entry of `MEDIA_GEN_DIRS`. `test-tool` is read-only and does not create new files.
+- **Writes**: `openai-images-generate`, `openai-images-edit`, `fetch-images`, and `fetch-videos` write under the first entry of `MEDIA_GEN_DIRS`. `test-images` is read-only and does not create new files.
 
 #### Glob patterns
 
@@ -644,7 +644,7 @@ Behavior notes:
 - URL downloads are only allowed when the URL matches `MEDIA_GEN_URLS` (when set).
 - When `n` is provided, it is only honored when the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS` environment variable is set to `true`. Otherwise, the call fails with a validation error.
 
-### test-tool
+### test-images
 
 Debug tool for testing MCP result placement without calling OpenAI API.
 
@@ -678,21 +678,21 @@ Behavior notes:
   - For `response_format: "b64_json"` each `data[i]` contains `b64_json`.
   - For `response_format: "url"` each `data[i]` contains `url` instead of `b64_json`.
 
-#### Debug CLI helpers for `test-tool`
+#### Debug CLI helpers for `test-images`
 
-For local debugging there are two helper scripts that call `test-tool` directly:
+For local debugging there are two helper scripts that call `test-images` directly:
 
-- `npm run test-tool` – uses `debug/debug-call.ts` and prints the validated
+- `npm run test-images` – uses `debug/debug-call.ts` and prints the validated
   `CallToolResult` as seen by the MCP SDK client. Usage:
 
   ```sh
-  npm run test-tool -- [placement] [--response_format url|b64_json]
+  npm run test-images -- [placement] [--response_format url|b64_json]
   # examples:
-  # npm run test-tool -- structured --response_format b64_json
-  # npm run test-tool -- structured --response_format url
+  # npm run test-images -- structured --response_format b64_json
+  # npm run test-images -- structured --response_format url
   ```
 
-- `npm run test-tool:raw` – uses `debug/debug-call-raw.ts` and prints the raw
+- `npm run test-images:raw` – uses `debug/debug-call-raw.ts` and prints the raw
   JSON-RPC `result` (the underlying `CallToolResult` without extra wrapping). Same
   CLI flags as above.
 
@@ -768,7 +768,7 @@ This pattern provides:
 - **Runtime validation** — Zod `.parse()` ensures all inputs match the schema before processing.
 - **MCP SDK compatibility** — `inputSchema: schema.shape` provides the JSON Schema for tool registration.
 
-All tools (`openai-images-*`, `openai-videos-*`, `fetch-images`, `test-tool`) follow this pattern.
+All tools (`openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-images`) follow this pattern.
 
 ---
 
@@ -786,12 +786,12 @@ This MCP server exposes the following tools with annotation hints:
 | **openai-videos-retrieve** | `true` | `false` | `false` | `true` |
 | **openai-videos-delete** | `true` | `false` | `false` | `true` |
 | **openai-videos-download-content** | `true` | `false` | `false` | `true` |
-| **fetch-images** | `true` | `false` | `false` | `true` |
-| **fetch-videos** | `true` | `false` | `false` | `true` |
-| **test-tool** | `true` | `false` | `false` | `true` |
+| **fetch-images** | `true` | `false` | `false` | `false` |
+| **fetch-videos** | `true` | `false` | `false` | `false` |
+| **test-images** | `true` | `false` | `false` | `false` |
 
 These hints help MCP clients understand that these tools:
-- invoke external APIs or read external resources (open world),
+- may invoke external APIs or read external resources (open world),
 - do not modify existing project files or user data; they only create new media files (images/videos) in configured output directories,
 - may produce different outputs on each call, even with the same inputs.
 

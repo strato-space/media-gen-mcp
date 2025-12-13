@@ -31,14 +31,14 @@ import {
 } from "./lib/env.js";
 import { log } from "./lib/logger.js";
 import {
-  testToolSchema,
+  testImagesSchema,
   openaiVideosCreateSchema,
   openaiVideosRemixSchema,
   openaiVideosListSchema,
   openaiVideosRetrieveSchema,
   openaiVideosDeleteSchema,
   openaiVideosDownloadContentSchema,
-  type TestToolArgs,
+  type TestImagesArgs,
   type OpenAIVideosCreateArgs,
   type OpenAIVideosRemixArgs,
   type OpenAIVideosListArgs,
@@ -256,11 +256,18 @@ function resolvePathInPrimaryRoot(filePath: string): string {
 }
 
 // Shared tool annotations
-const imageToolAnnotations = {
+const openaiToolAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: true,
+} as const;
+
+const localToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
 } as const;
 
 // Shared types for image processing result (ImageData imported from compression.ts)
@@ -1051,7 +1058,7 @@ const server = new McpServer({
       title: "OpenAI Images Generate",
       description: "Generate images from text prompts using OpenAI gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
       inputSchema: openaiImagesGenerateBaseSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIImagesGenerateToolArgs, _extra: unknown) => {
       try {
@@ -1195,7 +1202,7 @@ const server = new McpServer({
       title: "OpenAI Images Edit",
       description: "Edit images (inpainting, outpainting, compositing) from 1 to 16 inputs using OpenAI gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
       inputSchema: openaiImagesEditBaseSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIImagesEditToolArgs, _extra: unknown) => {
       try {
@@ -1344,7 +1351,7 @@ const server = new McpServer({
       description:
         "Create a video generation job using the OpenAI Videos API. Returns structuredContent with the OpenAI Video job object, and (optionally) resource_link items for downloaded assets.",
       inputSchema: openaiVideosCreateSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIVideosCreateArgs, _extra: unknown) => {
       try {
@@ -1450,7 +1457,7 @@ const server = new McpServer({
       description:
         "Create a remix video job from an existing video_id. Returns structuredContent with the OpenAI Video job object, and (optionally) resource_link items for downloaded assets.",
       inputSchema: openaiVideosRemixSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIVideosRemixArgs) => {
       try {
@@ -1526,7 +1533,7 @@ const server = new McpServer({
       description:
         "List video jobs using the OpenAI Videos API. Returns structuredContent with the OpenAI list response shape { data, has_more, last_id }.",
       inputSchema: openaiVideosListSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIVideosListArgs) => {
       try {
@@ -1561,7 +1568,7 @@ const server = new McpServer({
       title: "OpenAI Videos Retrieve",
       description: "Retrieve a video job by id using the OpenAI Videos API.",
       inputSchema: openaiVideosRetrieveSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIVideosRetrieveArgs) => {
       try {
@@ -1584,7 +1591,7 @@ const server = new McpServer({
       title: "OpenAI Videos Delete",
       description: "Delete a video job by id using the OpenAI Videos API.",
       inputSchema: openaiVideosDeleteSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIVideosDeleteArgs) => {
       try {
@@ -1608,7 +1615,7 @@ const server = new McpServer({
       description:
         "Download a video asset (video/thumbnail/spritesheet) for a completed job, write it under MEDIA_GEN_DIRS, and return resource_link(s).",
       inputSchema: openaiVideosDownloadContentSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIVideosDownloadContentArgs) => {
       try {
@@ -1703,7 +1710,7 @@ const server = new McpServer({
       title: "Fetch Images",
       description: "Fetch and process images from URLs or local file paths. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
       inputSchema: fetchImagesSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: localToolAnnotations,
     },
     async (args: FetchImagesArgs) => {
       try {
@@ -1953,7 +1960,7 @@ const server = new McpServer({
       description:
         "Fetch videos from URLs or local file paths. Returns MCP CallToolResult with resource_link items and structuredContent listing resolved files/URLs.",
       inputSchema: fetchVideosSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: localToolAnnotations,
     },
     async (args: FetchVideosArgs) => {
       try {
@@ -2161,7 +2168,7 @@ const server = new McpServer({
   );
 
   // ---------------------------------------------------------------------------
-  // test-tool: Debug MCP result format with predictable sample images
+  // test-images: Debug MCP result format with predictable sample images
   // ---------------------------------------------------------------------------
   // Enabled only when MEDIA_GEN_MCP_TEST_SAMPLE_DIR is set. Does NOT create new
   // files; instead it enumerates existing sample files and maps them into
@@ -2169,31 +2176,25 @@ const server = new McpServer({
 
   const testSampleDir = process.env["MEDIA_GEN_MCP_TEST_SAMPLE_DIR"];
 
-  log.child("test-tool").info("MEDIA_GEN_MCP_TEST_SAMPLE_DIR resolved", {
+  log.child("test-images").info("MEDIA_GEN_MCP_TEST_SAMPLE_DIR resolved", {
     isSet: !!testSampleDir,
     testSampleDir,
   });
 
   if (testSampleDir) {
-    log.child("test-tool").info("registering test-tool", { testSampleDir });
+    log.child("test-images").info("registering test-images", { testSampleDir });
 
     server.registerTool(
-      "test-tool",
+      "test-images",
       {
-        title: "Test Tool",
+        title: "Test Images",
         description: `Debug MCP result format using existing sample files from ${testSampleDir}. Reads up to 10 images and returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param). No new files are created.`,
-        inputSchema: testToolSchema.shape,
-        annotations: {
-          title: "Test Tool",
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: false,
-          openWorldHint: true,
-        },
+        inputSchema: testImagesSchema.shape,
+        annotations: localToolAnnotations,
       },
-      async (args: TestToolArgs) => {
+      async (args: TestImagesArgs) => {
         try {
-          const { tool_result = "resource_link", response_format = "url", compression } = testToolSchema.parse(args);
+          const { tool_result = "resource_link", response_format = "url", compression } = testImagesSchema.parse(args);
 
           // Read sample images (max 10, no sorting — predictable order from fs)
           const entries = await fs.promises.readdir(testSampleDir, { withFileTypes: true });
@@ -2270,7 +2271,7 @@ const server = new McpServer({
             quality: "high",
           };
 
-          log.child("test-tool").info("enumerated sample images", {
+          log.child("test-images").info("enumerated sample images", {
             count: imageFiles.length,
             tool_result,
             response_format,
@@ -2280,18 +2281,18 @@ const server = new McpServer({
             images,
             processedResult,
             revisedPromptItems,
-            "test-tool",
+            "test-images",
             tool_result,
             response_format,
             mockApiResponse,
           );
         } catch (err) {
-          return buildErrorResult(err, "test-tool");
+          return buildErrorResult(err, "test-images");
         }
       },
     );
 
-    log.info("test-tool enabled", { sample: testSampleDir });
+    log.info("test-images enabled", { sample: testSampleDir });
   }
 
   const transport = new StdioServerTransport();

@@ -241,8 +241,8 @@ export const fetchImagesClientSchema = z.object({
     .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
 });
 
-// test-tool schema
-export const testToolSchema = z.object({
+// test-images schema
+export const testImagesSchema = z.object({
   tool_result: toolResultEnum.default("resource_link").optional()
     .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
   response_format: responseFormatEnum.default("url")
@@ -256,7 +256,7 @@ export type OpenAIImagesGenerateArgs = z.input<typeof openaiImagesGenerateSchema
 export type OpenAIImagesEditArgs = z.input<typeof openaiImagesEditSchema>;
 export type FetchImagesArgs = z.input<typeof fetchImagesSchema>;
 export type FetchImagesClientArgs = z.input<typeof fetchImagesClientSchema>;
-export type TestToolArgs = z.input<typeof testToolSchema>;
+export type TestImagesArgs = z.input<typeof testImagesSchema>;
 
 export type OpenAIVideosCreateArgs = z.input<typeof openaiVideosCreateSchema>;
 export type OpenAIVideosRemixArgs = z.input<typeof openaiVideosRemixSchema>;
