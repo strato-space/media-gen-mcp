@@ -2,15 +2,22 @@ import { describe, it, expect } from "vitest";
 import {
   openaiImagesGenerateSchema,
   openaiImagesEditSchema,
+  openaiVideosCreateSchema,
+  openaiVideosRemixSchema,
+  openaiVideosListSchema,
+  openaiVideosRetrieveSchema,
+  openaiVideosDeleteSchema,
+  openaiVideosRetrieveContentSchema,
   fetchImagesSchema,
   fetchImagesClientSchema,
-  testToolSchema,
+  testImagesSchema,
   compressionSchema,
   type OpenAIImagesGenerateArgs,
   type OpenAIImagesEditArgs,
+  type OpenAIVideosCreateArgs,
   type FetchImagesArgs,
   type FetchImagesClientArgs,
-  type TestToolArgs,
+  type TestImagesArgs,
 } from "../src/lib/schemas.js";
 
 describe("schemas module", () => {
@@ -26,25 +33,24 @@ describe("schemas module", () => {
       }
     });
 
-    it("validates full input with all options", () => {
-      const input: OpenAIImagesGenerateArgs = {
-        prompt: "A beautiful sunset",
-        background: "transparent",
-        moderation: "low",
-        size: "1024x1024",
-        quality: "high",
-        n: 3,
-        output_format: "webp",
-        output_compression: 80,
-        tool_result: "resource_link",
-        response_format: "b64_json",
-        file: "/tmp/output.webp",
-        user: "user123",
-      };
-      const result = openaiImagesGenerateSchema.safeParse(input);
+	    it("validates full input with all options", () => {
+	      const input: OpenAIImagesGenerateArgs = {
+	        prompt: "A beautiful sunset",
+	        background: "transparent",
+	        moderation: "low",
+	        size: "1024x1024",
+	        quality: "high",
+	        n: 3,
+	        output_format: "webp",
+	        output_compression: 80,
+	        tool_result: "resource_link",
+	        response_format: "b64_json",
+	        user: "user123",
+	      };
+	      const result = openaiImagesGenerateSchema.safeParse(input);
 
-      expect(result.success).toBe(true);
-    });
+	      expect(result.success).toBe(true);
+	    });
 
     it("validates tool_result options", () => {
       expect(openaiImagesGenerateSchema.safeParse({ prompt: "test", tool_result: "resource_link" }).success).toBe(true);
@@ -88,27 +94,14 @@ describe("schemas module", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects relative file path", () => {
-      const input = { prompt: "test", file: "./output.png" };
-      const result = openaiImagesGenerateSchema.safeParse(input);
-
-      expect(result.success).toBe(false);
-    });
-
-    it("accepts absolute Unix path", () => {
-      const input = { prompt: "test", file: "/home/user/output.png" };
-      const result = openaiImagesGenerateSchema.safeParse(input);
-
-      expect(result.success).toBe(true);
-    });
-
-    it("accepts absolute Windows path", () => {
-      const input = { prompt: "test", file: "C:/Users/output.png" };
-      const result = openaiImagesGenerateSchema.safeParse(input);
-
-      expect(result.success).toBe(true);
-    });
-  });
+	    it("ignores legacy file field", () => {
+	      const result = openaiImagesGenerateSchema.safeParse({ prompt: "test", file: "./output.png" });
+	      expect(result.success).toBe(true);
+	      if (result.success) {
+	        expect((result.data as Record<string, unknown>)["file"]).toBeUndefined();
+	      }
+	    });
+	  });
 
   describe("openaiImagesEditSchema (openai-images-edit)", () => {
     it("validates single image input", () => {
@@ -187,6 +180,124 @@ describe("schemas module", () => {
     it("validates tool_result options", () => {
       expect(openaiImagesEditSchema.safeParse({ prompt: "Edit", image: "/tmp/img.png", tool_result: "resource_link" }).success).toBe(true);
       expect(openaiImagesEditSchema.safeParse({ prompt: "Edit", image: "/tmp/img.png", tool_result: "image" }).success).toBe(true);
+    });
+  });
+
+  describe("openaiVideosCreateSchema (openai-videos-create)", () => {
+    it("validates minimal valid input and applies defaults", () => {
+      const input: OpenAIVideosCreateArgs = { prompt: "A cinematic sunset over mountains" };
+      const result = openaiVideosCreateSchema.safeParse(input);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.model).toBe("sora-2");
+        expect(result.data.input_reference_fit).toBe("contain");
+        expect(result.data.input_reference_background).toBe("blur");
+        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.poll_interval_ms).toBe(2000);
+        expect(result.data.download_variants).toEqual(["video"]);
+      }
+    });
+
+    it("rejects invalid model", () => {
+      const result = openaiVideosCreateSchema.safeParse({
+        prompt: "test",
+        model: "not-a-model",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects invalid seconds/size", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", seconds: "5" }).success).toBe(false);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", size: "999x999" }).success).toBe(false);
+    });
+
+    it("rejects empty input_reference when provided", () => {
+      const result = openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference: "" });
+      expect(result.success).toBe(false);
+    });
+
+    it("ignores legacy file field", () => {
+      const result = openaiVideosCreateSchema.safeParse({ prompt: "test", file: "./out" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>)["file"]).toBeUndefined();
+      }
+    });
+
+    it("accepts hex padding background colors", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#112233" }).success).toBe(true);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#11223344" }).success).toBe(true);
+    });
+
+    it("rejects invalid input_reference_background", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "blue" }).success).toBe(false);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#12345" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosRemixSchema (openai-videos-remix)", () => {
+    it("validates minimal remix input and defaults", () => {
+      const result = openaiVideosRemixSchema.safeParse({ video_id: "vid_123", prompt: "Make it noir" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.poll_interval_ms).toBe(2000);
+        expect(result.data.download_variants).toEqual(["video"]);
+      }
+    });
+
+    it("rejects empty video_id", () => {
+      expect(openaiVideosRemixSchema.safeParse({ video_id: "", prompt: "x" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosListSchema (openai-videos-list)", () => {
+    it("validates list params", () => {
+      expect(openaiVideosListSchema.safeParse({}).success).toBe(true);
+      expect(openaiVideosListSchema.safeParse({ after: "vid_123", limit: 10, order: "desc" }).success).toBe(true);
+    });
+
+    it("rejects empty after", () => {
+      expect(openaiVideosListSchema.safeParse({ after: "" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosRetrieveSchema (openai-videos-retrieve)", () => {
+    it("requires non-empty video_id", () => {
+      expect(openaiVideosRetrieveSchema.safeParse({ video_id: "vid_123" }).success).toBe(true);
+      expect(openaiVideosRetrieveSchema.safeParse({ video_id: "" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosDeleteSchema (openai-videos-delete)", () => {
+    it("requires non-empty video_id", () => {
+      expect(openaiVideosDeleteSchema.safeParse({ video_id: "vid_123" }).success).toBe(true);
+      expect(openaiVideosDeleteSchema.safeParse({ video_id: "" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosRetrieveContentSchema (openai-videos-retrieve-content)", () => {
+    it("applies default variant and validates input", () => {
+      const result = openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.variant).toBe("video");
+      }
+    });
+
+    it("rejects invalid variant", () => {
+      expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", variant: "bad" }).success).toBe(false);
+    });
+
+    it("ignores legacy file field", () => {
+      const result = openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", file: "./out" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>)["file"]).toBeUndefined();
+      }
     });
   });
 
@@ -270,7 +381,7 @@ describe("schemas module", () => {
     });
   });
 
-  describe("fetchImagesClientSchema (sources + n)", () => {
+  describe("fetchImagesClientSchema (sources + ids + n)", () => {
     it("validates sources array only", () => {
       const input: FetchImagesClientArgs = {
         sources: ["https://example.com/img1.png", "/tmp/local.png"],
@@ -283,6 +394,28 @@ describe("schemas module", () => {
         expect(result.data.tool_result).toBe("resource_link"); // default
         expect(result.data.n).toBeUndefined();
       }
+    });
+
+    it("validates ids array only", () => {
+      const input: FetchImagesClientArgs = {
+        ids: ["video_123", "1646515b-a0ec-49fb-b617-649614361b5e"],
+      };
+      const result = fetchImagesClientSchema.safeParse(input);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.ids?.length).toBe(2);
+      }
+    });
+
+    it("rejects unsafe ids", () => {
+      expect(fetchImagesClientSchema.safeParse({ ids: ["../etc/passwd"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: [".."] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id*"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id?"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id/1"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id\\1"] }).success).toBe(false);
+      expect(fetchImagesClientSchema.safeParse({ ids: ["id.1"] }).success).toBe(false);
     });
 
     it("validates n only within bounds", () => {
@@ -321,9 +454,9 @@ describe("schemas module", () => {
     });
   });
 
-  describe("testToolSchema", () => {
+  describe("testImagesSchema", () => {
     it("validates empty input (all optional)", () => {
-      const result = testToolSchema.safeParse({});
+      const result = testImagesSchema.safeParse({});
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -333,19 +466,19 @@ describe("schemas module", () => {
     });
 
     it("validates tool_result options", () => {
-      expect(testToolSchema.safeParse({ tool_result: "resource_link" }).success).toBe(true);
-      expect(testToolSchema.safeParse({ tool_result: "image" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ tool_result: "resource_link" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ tool_result: "image" }).success).toBe(true);
     });
 
     it("rejects invalid tool_result values", () => {
-      expect(testToolSchema.safeParse({ tool_result: "invalid" }).success).toBe(false);
-      expect(testToolSchema.safeParse({ tool_result: "content" }).success).toBe(false);
-      expect(testToolSchema.safeParse({ tool_result: "api" }).success).toBe(false);
+      expect(testImagesSchema.safeParse({ tool_result: "invalid" }).success).toBe(false);
+      expect(testImagesSchema.safeParse({ tool_result: "content" }).success).toBe(false);
+      expect(testImagesSchema.safeParse({ tool_result: "api" }).success).toBe(false);
     });
 
     it("validates response_format options", () => {
-      expect(testToolSchema.safeParse({ response_format: "b64_json" }).success).toBe(true);
-      expect(testToolSchema.safeParse({ response_format: "url" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ response_format: "b64_json" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ response_format: "url" }).success).toBe(true);
     });
   });
 
@@ -434,12 +567,12 @@ describe("schemas module", () => {
       expect(fetchImagesClientSchema.safeParse(args).success).toBe(true);
     });
 
-    it("TestToolArgs type matches schema", () => {
-      const args: TestToolArgs = {
+    it("TestImagesArgs type matches schema", () => {
+      const args: TestImagesArgs = {
         tool_result: "image",
         response_format: "b64_json",
       };
-      expect(testToolSchema.safeParse(args).success).toBe(true);
+      expect(testImagesSchema.safeParse(args).success).toBe(true);
     });
   });
 });

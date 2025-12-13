@@ -9,6 +9,14 @@ import crypto from "node:crypto";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ImageData } from "./compression.js";
 
+function sanitizeForFilename(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function nowTimeTSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
 // Helper: check if string is an HTTP(S) URL
 export function isHttpUrl(val: string): boolean {
   return val.startsWith("http://") || val.startsWith("https://");
@@ -113,9 +121,11 @@ export function resolveOutputPath(
   if (!effectiveFileOutput) {
     const tmpDir = options?.outputDir ?? "/tmp";
     const unique = crypto.randomUUID();
-    const timestamp = Date.now();
+    const timestamp = nowTimeTSeconds();
     const fallbackExt = images[0]?.ext ?? "png";
-    effectiveFileOutput = path.join(tmpDir, `${toolPrefix}_${timestamp}_${unique}.${fallbackExt}`);
+    const method = sanitizeForFilename(toolPrefix);
+    const id = sanitizeForFilename(unique);
+    effectiveFileOutput = path.join(tmpDir, `output_${timestamp}_media-gen__${method}_${id}.${fallbackExt}`);
   }
 
   return { effectiveOutput, effectiveFileOutput };

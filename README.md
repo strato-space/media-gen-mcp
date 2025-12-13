@@ -13,14 +13,15 @@
 
 ---
 
-A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image generation and editing API, with ongoing work towards DALL·E support.
+A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image generation/editing API plus OpenAI Videos (Sora) job tooling, with ongoing work towards DALL·E support.
 
 **Design principle:** spec-first, type-safe image tooling – strict OpenAI Images API + MCP compliance with fully static TypeScript types and flexible result placements/response formats for different clients.
 
 - **Generate images** from text prompts using OpenAI's `gpt-image-1` model (with DALL·E support planned in future versions).
 - **Edit images** (inpainting, outpainting, compositing) from 1 up to 16 images at once, with advanced prompt control.
+- **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
 - **Fetch & compress images** from HTTP(S) URLs or local file paths with smart size/quality optimization.
-- **Debug MCP output shapes** with a test tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
+- **Debug MCP output shapes** with a `test-images` tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
 - **Integrates with**: [fast-agent](https://github.com/strato-space/fast-agent), [Windsurf](https://windsurf.com), [Claude Desktop](https://www.anthropic.com/claude/desktop), [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com/), and any MCP-compatible client.
 
 ---
@@ -31,12 +32,23 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
   Tool outputs are first-class [`CallToolResult`](https://github.com/modelcontextprotocol/spec/blob/main/schema/2025-11-25/schema.json) objects from the latest MCP schema, including:
   `content` items (`text`, `image`, `resource_link`), optional `structuredContent`, optional top-level `files`, and the `isError` flag for failures.
 
-- **Full gpt-image-1 parameter coverage (generate & edit)**  
-  - `openai-images-generate` mirrors the OpenAI Images *generate* API for `gpt-image-1` (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
+- **Full gpt-image-1 and sora-2/sora-2-pro parameters coverage (generate & edit)**  
+  - `openai-images-generate` mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1` (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
   - `openai-images-edit` mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1` (image, mask, `n`, quality, size, `user`).
+
+- **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / content)**  
+  - `openai-videos-create` mirrors [`videos/create`](https://platform.openai.com/docs/api-reference/videos/create) and can optionally wait for completion.
+  - `openai-videos-remix` mirrors [`videos/remix`](https://platform.openai.com/docs/api-reference/videos/remix).
+  - `openai-videos-list` mirrors [`videos/list`](https://platform.openai.com/docs/api-reference/videos/list).
+  - `openai-videos-retrieve` mirrors [`videos/retrieve`](https://platform.openai.com/docs/api-reference/videos/retrieve).
+  - `openai-videos-delete` mirrors [`videos/delete`](https://platform.openai.com/docs/api-reference/videos/delete).
+  - `openai-videos-retrieve-content` mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
 
 - **Fetch and process images from URLs or files**  
   `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
+
+- **Fetch videos from URLs or files**  
+  `fetch-videos` tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
 
 - **Mix and edit up to 16 images**  
   `openai-images-edit` accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for `gpt-image-1` image edits.
@@ -46,10 +58,10 @@ A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image genera
 
 - **Resource-aware file output with `resource_link`**  
   - Automatic switch from inline base64 to `file` when the total response size exceeds a safe threshold.
-  - Images are written to disk with GUID-based filenames and consistent extensions, and exposed to MCP clients as `resource_link` or `image` items in `content[]` depending on `tool_result`, with OpenAI ImagesResponse format in `structuredContent`.
+  - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients as `resource_link` or `image` items in `content[]` depending on `tool_result`, with OpenAI ImagesResponse format in `structuredContent`.
 
-- **Built-in test tool for MCP client debugging**  
-  `test-tool` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
+- **Built-in test-images tool for MCP client debugging**  
+  `test-images` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
 
 - **Structured MCP error handling**  
   All tool errors (validation, OpenAI API failures, I/O) are returned as MCP errors with
@@ -99,21 +111,31 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 | Module | Tests | Description |
 |--------|-------|-------------|
 | `compression` | 12 | Image format detection, buffer processing, file I/O |
-| `helpers` | 35 | URL/path validation, output resolution, result placement, resource links |
-| `schemas` | 39 | Zod schema validation for all 4 tools, type inference |
+| `helpers` | 31 | URL/path validation, output resolution, result placement, resource links |
+| `env` | 19 | Configuration parsing, env validation, defaults |
+| `logger` | 10 | Structured logging + truncation safety |
+| `schemas` | 64 | Zod schema validation for all tools, type inference |
+| `fetch-images` (integration) | 2 | End-to-end MCP tool call behavior |
+| `fetch-videos` (integration) | 2 | End-to-end MCP tool call behavior |
 
 **Test categories:**
 
 - **compression** — `isCompressionAvailable`, `detectImageFormat`, `processBufferWithCompression`, `readAndProcessImage`
 - **helpers** — `isHttpUrl`, `isAbsolutePath`, `isBase64Image`, `ensureDirectoryWritable`, `resolveOutputPath`, `getResultPlacement`, `buildResourceLinks`
-- **schemas** — validation for `openai-images-generate`, `openai-images-edit`, `fetch-images`, `test-tool` inputs, boundary testing (prompt length, image count limits, path validation)
+- **env** — config loading and validation for `MEDIA_GEN_*` / `MEDIA_GEN_MCP_*` settings
+- **logger** — truncation and error formatting behavior
+- **schemas** — validation for `openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-images` inputs, boundary testing (prompt length, image count limits, path validation)
 
 ```sh
 npm run test
 # ✓ test/compression.test.ts (12 tests)
-# ✓ test/helpers.test.ts (35 tests)
-# ✓ test/schemas.test.ts (39 tests)
-# Tests: 86 passed
+# ✓ test/helpers.test.ts (31 tests)
+# ✓ test/env.test.ts (19 tests)
+# ✓ test/logger.test.ts (10 tests)
+# ✓ test/schemas.test.ts (64 tests)
+# ✓ test/fetch-images.integration.test.ts (2 tests)
+# ✓ test/fetch-videos.integration.test.ts (2 tests)
+# Tests: 140 passed
 ```
 
 ### Run directly via npx (no local clone)
@@ -206,13 +228,35 @@ Environment variables:
 - The server will **optionally** load a local `.env` file from its working directory if present (it does not override already-set environment variables).
 - You can also pass `--env-file /path/to/env` when starting the server (including via `npx`); this file is loaded via `dotenv` before tools run, again without overriding already-set variables.
 
+### Logging and base64 truncation
+
+To avoid flooding logs with huge image payloads, the built-in logger applies a
+log-only sanitizer to structured `data` passed to `log.debug/info/warn/error`:
+
+- Truncates configured string fields (e.g. `b64_json`, `base64`, string
+  `data`, `image_url`) to a short preview controlled by
+  `LOG_TRUNCATE_DATA_MAX` (default: 64 characters). The list of keys defaults
+  to `LOG_SANITIZE_KEYS` inside `src/lib/logger.ts` and can be overridden via
+  `MEDIA_GEN_MCP_LOG_SANITIZE_KEYS` (comma-separated list of field names).
+- Sanitization is applied **only** to log serialization; tool results returned
+  to MCP clients are never modified.
+
+Control via environment:
+
+- `MEDIA_GEN_MCP_LOG_SANITIZE_IMAGES` (default: `true`)
+  - `1`, `true`, `yes`, `on` – enable truncation (default behaviour).
+  - `0`, `false`, `no`, `off` – disable truncation and log full payloads.
+
+Field list and limits are configured in `src/lib/logger.ts` via
+`LOG_SANITIZE_KEYS` and `LOG_TRUNCATE_DATA_MAX`.
+
 ### Security and local file access
 
 - **Allowed directories**: All tools are restricted to paths matching `MEDIA_GEN_DIRS`. If unset, defaults to `/tmp/media-gen-mcp` (or `%TEMP%/media-gen-mcp` on Windows).
-- **Test samples**: `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` adds a directory to the allowlist and enables the test tool.
+- **Test samples**: `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` adds a directory to the allowlist and enables the `test-images` tool.
 - **Local reads**: `fetch-images` accepts file paths (absolute or relative). Relative paths are resolved against the first `MEDIA_GEN_DIRS` entry and must still match an allowed pattern.
 - **Remote reads**: HTTP(S) fetches are filtered by `MEDIA_GEN_URLS` patterns. Empty = allow all.
-- **Writes**: `openai-images-generate`, `openai-images-edit`, and `fetch-images` write under the first entry of `MEDIA_GEN_DIRS`. `test-tool` is read-only and does not create new files.
+- **Writes**: `openai-images-generate`, `openai-images-edit`, `fetch-images`, and `fetch-videos` write under the first entry of `MEDIA_GEN_DIRS`. `test-images` is read-only and does not create new files.
 
 #### Glob patterns
 
@@ -346,9 +390,10 @@ Arguments (input schema):
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
-- `file` (string, optional)
-  - Path to save the image file, **absolute or relative** to the first `MEDIA_GEN_DIRS` entry (or the default root).
-  - When `n > 1`, an index suffix like `_1`, `_2` is appended to the filename.
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
 
 Behavior notes:
 
@@ -356,7 +401,7 @@ Behavior notes:
 - If the total size of all base64 images would exceed the configured payload
   threshold (default ~50MB via `MCP_MAX_CONTENT_BYTES`), the server
   automatically switches the **effective output mode** to file/URL-based and saves
-  images to `file` or to the first entry of `MEDIA_GEN_DIRS` (default: `/tmp/media-gen-mcp`).
+  images to the first entry of `MEDIA_GEN_DIRS` (default: `/tmp/media-gen-mcp`).
 - Even when you explicitly request `response_format: "b64_json"`, the server still writes
   the files to disk (for static hosting, caching, or later reuse). Exposure of
   file paths / URLs in the tool result then depends on `MEDIA_GEN_MCP_RESULT_PLACEMENT`
@@ -409,7 +454,7 @@ Arguments (input schema):
 - `n` (integer, optional)
   - Number of images to generate.
   - Min: 1, Max: 10.
-- `quality` ("auto" | "high" | "medium" | "low", default: "low")
+- `quality` ("auto" | "high" | "medium" | "low", default: "high")
 - `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1024")
 - `user` (string, optional)
   - User identifier forwarded to OpenAI for monitoring.
@@ -417,10 +462,10 @@ Arguments (input schema):
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
-- `file` (string, optional)
-  - Path where edited images will be written, **absolute or relative** to the first `MEDIA_GEN_DIRS` entry.
-  - If multiple images are produced, an index suffix is appended before the
-    extension (e.g. `_1.png`, `_2.png`).
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
 
 Behavior notes:
 
@@ -450,6 +495,83 @@ Error handling (both tools):
   - `content: [{ type: "text", text: <error message string> }]`
 - The error message text is taken directly from the underlying exception message, without additional commentary from the server, while full details are logged to the server console.
 
+### openai-videos-create
+
+Create a video generation job using the OpenAI Videos API (`videos.create`).
+
+Arguments (input schema):
+
+- `prompt` (string, required) — text prompt describing the video (max 32K chars).
+- `input_reference` (string, optional) — optional image reference (HTTP(S) URL, base64/data URL, or file path).
+- `input_reference_fit` ("match" | "cover" | "contain" | "stretch", default: "contain")
+  - How to fit `input_reference` to the requested video `size`:
+    - `match`: require exact dimensions (fails fast on mismatch)
+    - `cover`: resize + center-crop to fill
+    - `contain`: resize + pad/letterbox to fit (default)
+    - `stretch`: resize with distortion
+- `input_reference_background` ("blur" | "black" | "white" | "#RRGGBB" | "#RRGGBBAA", default: "blur")
+  - Padding background used when `input_reference_fit="contain"`.
+- `model` ("sora-2" | "sora-2-pro", default: "sora-2")
+- `seconds` ("4" | "8" | "12", optional)
+- `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
+- `wait_for_completion` (boolean, default: false)
+  - When true, the server polls `openai-videos-retrieve` until `completed` or `failed` (or timeout), then downloads assets.
+- `timeout_ms` (integer, default: 300000)
+- `poll_interval_ms` (integer, default: 2000)
+- `download_variants` (string[], default: ["video"])
+  - Allowed values: `"video" | "thumbnail" | "spritesheet"`.
+
+Output (MCP CallToolResult):
+
+- `structuredContent`: OpenAI `Video` object (job metadata; final state when `wait_for_completion=true`).
+- `content`: includes `resource_link` items for downloaded assets (when requested) and text blocks with JSON.
+
+### openai-videos-remix
+
+Create a remix job from an existing `video_id` (`videos.remix`).
+
+Arguments (input schema):
+
+- `video_id` (string, required)
+- `prompt` (string, required)
+- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants` — same semantics as `openai-videos-create`.
+
+### openai-videos-list
+
+List video jobs (`videos.list`).
+
+Arguments (input schema):
+
+- `after` (string, optional) — cursor (video id) to list after.
+- `limit` (integer, optional)
+- `order` ("asc" | "desc", optional)
+
+Output:
+
+- `structuredContent`: OpenAI list response shape `{ data, has_more, last_id }`.
+- `content`: a text block with serialized JSON.
+
+### openai-videos-retrieve
+
+Retrieve job status (`videos.retrieve`).
+
+- `video_id` (string, required)
+
+### openai-videos-delete
+
+Delete a video job (`videos.delete`).
+
+- `video_id` (string, required)
+
+### openai-videos-retrieve-content
+
+Retrieve an asset for a completed job (`videos.downloadContent`, REST `GET /videos/{video_id}/content`), write it under allowed `MEDIA_GEN_DIRS`, and return an MCP `resource_link`.
+
+Arguments (input schema):
+
+- `video_id` (string, required)
+- `variant` ("video" | "thumbnail" | "spritesheet", default: "video")
+
 ### fetch-images
 
 Fetch and process images from URLs or local file paths with optional compression.
@@ -459,18 +581,28 @@ Arguments (input schema):
 - `sources` (string[], optional)
   - Array of image sources: HTTP(S) URLs or file paths (absolute or relative to the first `MEDIA_GEN_DIRS` entry).
   - Min: 1, Max: 20 images.
-  - Mutually exclusive with `n`.
+  - Mutually exclusive with `ids` and `n`.
+- `ids` (string[], optional)
+  - Array of image IDs to fetch by local filename match under the primary `MEDIA_GEN_DIRS[0]` directory.
+  - IDs must be safe (`[A-Za-z0-9_-]` only; no `..`, `*`, `?`, slashes).
+  - Matches filenames containing `_{id}_` or `_{id}.` (supports both single outputs and multi-output suffixes like `_1.png`).
+  - When `ids` is used, `compression` and `file` are not supported (no new files are created).
+  - Mutually exclusive with `sources` and `n`.
 - `n` (integer, optional)
   - When set, returns the last N image files from the primary `MEDIA_GEN_DIRS[0]` directory.
   - Files are sorted by modification time (most recently modified first).
-  - Mutually exclusive with `sources`.
+  - Mutually exclusive with `sources` and `ids`.
 - `compression` (object, optional)
   - `max_size` (integer, optional): Max dimension in pixels. Images larger than this will be resized.
   - `max_bytes` (integer, optional): Target max file size in bytes. Default: 819200 (800KB).
--  - `quality` (integer, optional): JPEG/WebP quality 1-100. Default: 85.
--  - `format` ("jpeg" | "png" | "webp", optional): Output format. Default: jpeg.
+  - `quality` (integer, optional): JPEG/WebP quality 1-100. Default: 85.
+  - `format` ("jpeg" | "png" | "webp", optional): Output format. Default: jpeg.
 - `response_format` ("url" | "b64_json", default: "url")
   - Response format: file/URL-based (`url`) or inline base64 (`b64_json`).
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
 - `file` (string, optional)
   - Base path for output files. If multiple images, index suffix is added.
 
@@ -483,7 +615,40 @@ Behavior notes:
 - When `n` is provided, it is only honored when the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES` environment variable is set to `true`. Otherwise, the call fails with a validation error.
 - Sometimes an MCP client (for example, ChargeGPT) may not wait for a response from `media-gen-mcp` due to a timeout. In creative environments where you need to quickly retrieve the latest `openai-images-generate` / `openai-images-edit` outputs, you can use `fetch-images` with the `n` argument. When the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES=true` environment variable is set, `fetch-images` will return the last N files from `MEDIA_GEN_DIRS[0]` even if the original generation or edit operation timed out on the MCP client side.
 
-### test-tool
+### fetch-videos
+
+Fetch videos from HTTP(S) URLs or local file paths.
+
+Arguments (input schema):
+
+- `sources` (string[], optional)
+  - Array of video sources: HTTP(S) URLs or file paths (absolute or relative to the first `MEDIA_GEN_DIRS` entry).
+  - Min: 1, Max: 20 videos.
+  - Mutually exclusive with `ids` and `n`.
+- `ids` (string[], optional)
+  - Array of video IDs to fetch by local filename match under the primary `MEDIA_GEN_DIRS[0]` directory.
+  - IDs must be safe (`[A-Za-z0-9_-]` only; no `..`, `*`, `?`, slashes).
+  - Matches filenames containing `_{id}_` or `_{id}.` (supports both single outputs and multi-asset suffixes like `_thumbnail.webp`).
+  - When `ids` is used, `file` is not supported (no downloads; returns existing files).
+  - Mutually exclusive with `sources` and `n`.
+- `n` (integer, optional)
+  - When set, returns the last N video files from the primary `MEDIA_GEN_DIRS[0]` directory.
+  - Files are sorted by modification time (most recently modified first).
+  - Mutually exclusive with `sources` and `ids`.
+- `file` (string, optional)
+  - Base path for output files (used when downloading from URLs). If multiple videos are downloaded, an index suffix is added.
+
+Output:
+
+- `content`: one `resource_link` per resolved video, plus an optional error summary text block.
+- `structuredContent`: `{ data: [{ source, uri, file, mimeType, name, downloaded }], errors?: string[] }`.
+
+Behavior notes:
+
+- URL downloads are only allowed when the URL matches `MEDIA_GEN_URLS` (when set).
+- When `n` is provided, it is only honored when the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS` environment variable is set to `true`. Otherwise, the call fails with a validation error.
+
+### test-images
 
 Debug tool for testing MCP result placement without calling OpenAI API.
 
@@ -496,6 +661,10 @@ Arguments (input schema):
   - Override `MEDIA_GEN_MCP_RESULT_PLACEMENT` for this call.
 - `compression` (object, optional)
   - Same logical tuning knobs as `fetch-images`, but using camelCase keys:
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
     - `maxSize` (integer, optional): max dimension in pixels.
     - `maxBytes` (integer, optional): target max file size in bytes.
     - `quality` (integer, optional): JPEG/WebP quality 1–100.
@@ -513,21 +682,21 @@ Behavior notes:
   - For `response_format: "b64_json"` each `data[i]` contains `b64_json`.
   - For `response_format: "url"` each `data[i]` contains `url` instead of `b64_json`.
 
-#### Debug CLI helpers for `test-tool`
+#### Debug CLI helpers for `test-images`
 
-For local debugging there are two helper scripts that call `test-tool` directly:
+For local debugging there are two helper scripts that call `test-images` directly:
 
-- `npm run test-tool` – uses `debug/debug-call.ts` and prints the validated
+- `npm run test-images` – uses `debug/debug-call.ts` and prints the validated
   `CallToolResult` as seen by the MCP SDK client. Usage:
 
   ```sh
-  npm run test-tool -- [placement] [--response_format url|b64_json]
+  npm run test-images -- [placement] [--response_format url|b64_json]
   # examples:
-  # npm run test-tool -- structured --response_format b64_json
-  # npm run test-tool -- structured --response_format url
+  # npm run test-images -- structured --response_format b64_json
+  # npm run test-images -- structured --response_format url
   ```
 
-- `npm run test-tool:raw` – uses `debug/debug-call-raw.ts` and prints the raw
+- `npm run test-images:raw` – uses `debug/debug-call-raw.ts` and prints the raw
   JSON-RPC `result` (the underlying `CallToolResult` without extra wrapping). Same
   CLI flags as above.
 
@@ -539,6 +708,18 @@ Both scripts truncate large fields for readability:
 ---
 
 ## 🧩 Version policy
+
+### Semantic Versioning (SemVer)
+
+This package follows **SemVer**: `MAJOR.MINOR.PATCH` (x.y.z).
+
+- `MAJOR` — breaking changes (tool names, input schemas, output shapes).
+- `MINOR` — new tools or backward-compatible additions (new optional params, new fields in responses).
+- `PATCH` — bug fixes and internal refactors with no intentional behavior change.
+
+Since `1.0.0`, this project follows **standard SemVer rules**: breaking changes bump **MAJOR** (npm’s `^1.0.0` allows `1.x`, but not `2.0.0`).
+
+### Dependency policy
 
 This repository aims to stay **closely aligned with current stable releases**:
 
@@ -591,7 +772,7 @@ This pattern provides:
 - **Runtime validation** — Zod `.parse()` ensures all inputs match the schema before processing.
 - **MCP SDK compatibility** — `inputSchema: schema.shape` provides the JSON Schema for tool registration.
 
-All four tools (`openai-images-generate`, `openai-images-edit`, `fetch-images`, `test-tool`) follow this pattern.
+All tools (`openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-images`) follow this pattern.
 
 ---
 
@@ -603,12 +784,19 @@ This MCP server exposes the following tools with annotation hints:
 |------|----------------|-------------------|------------------|-----------------|
 | **openai-images-generate** | `true` | `false` | `false` | `true` |
 | **openai-images-edit** | `true` | `false` | `false` | `true` |
-| **fetch-images** | `true` | `false` | `false` | `true` |
-| **test-tool** | `true` | `false` | `false` | `true` |
+| **openai-videos-create** | `true` | `false` | `false` | `true` |
+| **openai-videos-remix** | `true` | `false` | `false` | `true` |
+| **openai-videos-list** | `true` | `false` | `false` | `true` |
+| **openai-videos-retrieve** | `true` | `false` | `false` | `true` |
+| **openai-videos-delete** | `true` | `false` | `false` | `true` |
+| **openai-videos-retrieve-content** | `true` | `false` | `false` | `true` |
+| **fetch-images** | `true` | `false` | `false` | `false` |
+| **fetch-videos** | `true` | `false` | `false` | `false` |
+| **test-images** | `true` | `false` | `false` | `false` |
 
 These hints help MCP clients understand that these tools:
-- invoke external APIs or read external resources (open world),
-- do not modify existing project files or user data; they only create new image files in configured output directories,
+- may invoke external APIs or read external resources (open world),
+- do not modify existing project files or user data; they only create new media files (images/videos) in configured output directories,
 - may produce different outputs on each call, even with the same inputs.
 
 Because `readOnlyHint` is set to `true` for most tools, MCP platforms (including chatgpt.com) can treat this server as logically read-only and usually will not show "this tool can modify your files" warnings.
@@ -623,16 +811,25 @@ media-gen-mcp/
 │   ├── index.ts              # MCP server entry point
 │   └── lib/
 │       ├── compression.ts    # Image compression (sharp)
+│       ├── env.ts            # Env parsing + allowlists (+ glob support)
 │       ├── helpers.ts        # URL/path validation, result building
+│       ├── logger.ts         # Structured logging + truncation helpers
 │       └── schemas.ts        # Zod schemas for all tools
 ├── test/
-│   ├── compression.test.ts   # 12 tests
-│   ├── helpers.test.ts       # 35 tests
-│   └── schemas.test.ts       # 39 tests
+│   ├── compression.test.ts             # 12 tests
+│   ├── env.test.ts                     # 19 tests
+│   ├── fetch-images.integration.test.ts# 2 tests
+│   ├── fetch-videos.integration.test.ts# 2 tests
+│   ├── helpers.test.ts                 # 31 tests
+│   ├── logger.test.ts                  # 10 tests
+│   └── schemas.test.ts                 # 64 tests
+├── debug/                    # Local debug helpers (MCP client scripts)
+├── plan/                     # Design notes / plans
 ├── dist/                     # Compiled output
 ├── tsconfig.json
 ├── vitest.config.ts
 ├── package.json
+├── CHANGELOG.md
 ├── README.md
 └── AGENTS.md
 ```
@@ -731,11 +928,11 @@ In short, this library:
 
 - **Configurable payload safeguard:** By default this server uses a ~50MB budget (52,428,800 bytes) for inline `content` to stay within typical MCP client limits. You can override this threshold by setting the `MCP_MAX_CONTENT_BYTES` environment variable to a higher (or lower) value.
 - **Auto-Switch to File Output:** If the total image base64 size exceeds the configured threshold, the tool automatically saves images to disk and returns file path(s) via `resource_link` instead of inline base64. This helps avoid client-side "payload too large" errors while still delivering full-resolution images.
-- **Default File Location:** If you do not specify a `file` path, images will be saved to `/tmp` (or the directory set by the `MEDIA_GEN_MCP_OUTPUT_DIR` environment variable) with a unique filename.
+- **Default File Location:** If you do not specify a `file` path, outputs are saved under `MEDIA_GEN_DIRS[0]` (default: `/tmp/media-gen-mcp`) using names like `output_<time_t>_media-gen__<tool>_<id>.<ext>`.
 - **Environment Variables:**
-  - `MEDIA_GEN_MCP_OUTPUT_DIR`: Set this to control where large images and file outputs are saved. Example: `export MEDIA_GEN_MCP_OUTPUT_DIR=/your/desired/dir`. This directory may coincide with your public static directory if you serve files directly from it.
+  - `MEDIA_GEN_DIRS`: Set this to control where outputs are saved. Example: `export MEDIA_GEN_DIRS=/your/desired/dir`. This directory may coincide with your public static directory if you serve files directly from it.
   - `MEDIA_GEN_MCP_URL_PREFIXES`: Optional comma-separated HTTPS prefixes for public URLs, matched positionally to `MEDIA_GEN_DIRS` entries. When set, the server builds public URLs as `<prefix>/<relative_path_inside_root>` and returns them alongside file paths (for example via `resource_link` URIs and `structuredContent.data[].url` when `response_format: "url"`). Example: `export MEDIA_GEN_MCP_URL_PREFIXES=https://media-gen.example.com/media,https://media-gen.example.com/samples`
-- **Best Practice:** For large or production images, always use file output and ensure your client is configured to handle file paths. Configure `MEDIA_GEN_DIRS` and (optionally) `MEDIA_GEN_MCP_URL_PREFIXES` to serve images via a public web server (e.g., nginx).
+  - **Best Practice:** For large or production images, always use file output and ensure your client is configured to handle file paths. Configure `MEDIA_GEN_DIRS` and (optionally) `MEDIA_GEN_MCP_URL_PREFIXES` to serve images via a public web server (e.g., nginx).
 
 ---
 
@@ -780,6 +977,9 @@ Both `openai-images-generate` and `openai-images-edit` now attach `files` + `url
   - [Images generate (gpt-image-1)](https://platform.openai.com/docs/api-reference/images/create)
   - [Images edit (`createEdit`)](https://platform.openai.com/docs/api-reference/images/createEdit)
   - [Tools guide: image generation & revised_prompt](https://platform.openai.com/docs/guides/tools-image-generation)
+
+- **OpenAI Videos**
+  - [Videos API overview](https://platform.openai.com/docs/api-reference/videos)
 
 - **Case studies**
   - [MCP image rendering in ChatGPT (GitHub issue)](https://github.com/strato-space/report/issues/1)

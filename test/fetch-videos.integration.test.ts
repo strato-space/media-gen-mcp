@@ -5,7 +5,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-async function callFetchImages(
+async function callFetchVideos(
   args: Record<string, unknown>,
   envOverrides: Record<string, string>,
 ): Promise<unknown> {
@@ -19,7 +19,7 @@ async function callFetchImages(
   });
 
   const client = new Client(
-    { name: "fetch-images-integration-test", version: "1.0.0" },
+    { name: "fetch-videos-integration-test", version: "1.0.0" },
     { capabilities: { tools: { listChanged: false } } },
   );
 
@@ -27,7 +27,7 @@ async function callFetchImages(
 
   try {
     const result = await client.callTool({
-      name: "fetch-images",
+      name: "fetch-videos",
       arguments: args,
     });
     await client.close();
@@ -38,15 +38,11 @@ async function callFetchImages(
   }
 }
 
-const TINY_PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
-const TINY_PNG_BUFFER = Buffer.from(TINY_PNG_BASE64, "base64");
-
-describe("fetch-images integration", () => {
+describe("fetch-videos integration", () => {
   it("returns error when n is used but gating env is not true", async () => {
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
 
-    const result = await callFetchImages(
+    const result = await callFetchVideos(
       { n: 1 },
       {
         MEDIA_GEN_DIRS: tmpDir,
@@ -57,64 +53,63 @@ describe("fetch-images integration", () => {
     const res = result as { isError?: boolean; content?: Array<{ type?: string; text?: string }> };
     expect(res.isError).toBe(true);
     const textBlock = res.content?.find((c) => c.type === "text");
-    expect(textBlock?.text ?? "").toContain("Fetching last N images is disabled");
+    expect(textBlock?.text ?? "").toContain("Fetching last N videos is disabled");
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("reuses existing local files when n is set and compression is omitted", async () => {
+  it("lists existing local videos when n is set", async () => {
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
 
-    const first = path.join(tmpDir, "first.png");
-    const second = path.join(tmpDir, "second.png");
-    const third = path.join(tmpDir, "third.png");
+    const first = path.join(tmpDir, "first.mp4");
+    const second = path.join(tmpDir, "second.mp4");
+    const third = path.join(tmpDir, "third.mp4");
 
-    await fs.promises.writeFile(first, TINY_PNG_BUFFER);
-    await fs.promises.writeFile(second, TINY_PNG_BUFFER);
-    await fs.promises.writeFile(third, TINY_PNG_BUFFER);
+    const dummyMp4 = Buffer.from("00000018667479706D703432", "hex");
+    await fs.promises.writeFile(first, dummyMp4);
+    await fs.promises.writeFile(second, dummyMp4);
+    await fs.promises.writeFile(third, dummyMp4);
 
     const now = Date.now() / 1000;
     await fs.promises.utimes(first, now - 30, now - 30);
     await fs.promises.utimes(second, now - 20, now - 20);
     await fs.promises.utimes(third, now - 10, now - 10);
 
-    const result = await callFetchImages(
+    const result = await callFetchVideos(
       { n: 2 },
       {
         MEDIA_GEN_DIRS: tmpDir,
         MEDIA_GEN_MCP_URL_PREFIXES: "https://example.com/media",
-        MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES: "true",
+        MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS: "true",
       },
     );
 
-    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ url?: string }> } };
+    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ uri?: string }> } };
     expect(res.isError).not.toBe(true);
 
     const data = res.structuredContent?.data ?? [];
-    const urls = data.map((d) => d.url).filter((u): u is string => typeof u === "string");
+    const uris = data.map((d) => d.uri).filter((u): u is string => typeof u === "string");
 
-    expect(urls.length).toBe(2);
-    const hasSecond = urls.some((u) => u.endsWith("second.png"));
-    const hasThird = urls.some((u) => u.endsWith("third.png"));
-
-    expect(hasSecond).toBe(true);
-    expect(hasThird).toBe(true);
+    expect(uris.length).toBe(2);
+    expect(uris.some((u) => u.endsWith("second.mp4"))).toBe(true);
+    expect(uris.some((u) => u.endsWith("third.mp4"))).toBe(true);
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("fetches existing local images by ids", async () => {
+  it("fetches existing local videos by ids", async () => {
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
 
-    const id1 = "abc123";
-    const id2 = "def456";
-    const first = path.join(tmpDir, `output_100_media-gen__openai-images-generate_${id1}.png`);
-    const second = path.join(tmpDir, `output_101_media-gen__openai-images-generate_${id2}_1.png`);
+    const id1 = "video_123";
+    const id2 = "video_456";
+    const first = path.join(tmpDir, `output_100_media-gen__openai-videos-create_${id1}.mp4`);
+    const second = path.join(tmpDir, `output_101_media-gen__openai-videos-create_${id2}_video.mp4`);
 
-    await fs.promises.writeFile(first, TINY_PNG_BUFFER);
-    await fs.promises.writeFile(second, TINY_PNG_BUFFER);
+    const dummyMp4 = Buffer.from("00000018667479706D703432", "hex");
+    await fs.promises.writeFile(first, dummyMp4);
+    await fs.promises.writeFile(second, dummyMp4);
 
-    const result = await callFetchImages(
+    const result = await callFetchVideos(
       { ids: [id1, id2] },
       {
         MEDIA_GEN_DIRS: tmpDir,
@@ -122,14 +117,14 @@ describe("fetch-images integration", () => {
       },
     );
 
-    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ url?: string }> } };
+    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ uri?: string }> } };
     expect(res.isError).not.toBe(true);
 
     const data = res.structuredContent?.data ?? [];
-    const urls = data.map((d) => d.url).filter((u): u is string => typeof u === "string");
+    const uris = data.map((d) => d.uri).filter((u): u is string => typeof u === "string");
 
-    expect(urls.some((u) => u.endsWith(path.basename(first)))).toBe(true);
-    expect(urls.some((u) => u.endsWith(path.basename(second)))).toBe(true);
+    expect(uris.some((u) => u.endsWith(path.basename(first)))).toBe(true);
+    expect(uris.some((u) => u.endsWith(path.basename(second)))).toBe(true);
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
   });

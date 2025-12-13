@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   type ImageData,
   type CompressionOptions,
+  detectImageFormat,
   fetchAndProcessImage,
   readAndProcessImage,
 } from "./lib/compression.js";
@@ -29,12 +30,27 @@ import {
   mapFileToPublicUrl,
 } from "./lib/env.js";
 import { log } from "./lib/logger.js";
-import { testToolSchema, type TestToolArgs } from "./lib/schemas.js";
+import {
+  testImagesSchema,
+  openaiVideosCreateSchema,
+  openaiVideosRemixSchema,
+  openaiVideosListSchema,
+  openaiVideosRetrieveSchema,
+  openaiVideosDeleteSchema,
+  openaiVideosRetrieveContentSchema,
+  type TestImagesArgs,
+  type OpenAIVideosCreateArgs,
+  type OpenAIVideosRemixArgs,
+  type OpenAIVideosListArgs,
+  type OpenAIVideosRetrieveArgs,
+  type OpenAIVideosDeleteArgs,
+  type OpenAIVideosRetrieveContentArgs,
+} from "./lib/schemas.js";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { TextContent, ImageContent, ResourceLink, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { OpenAI, AzureOpenAI, toFile } from "openai";
+import { OpenAI, AzureOpenAI, toFile, type Uploadable } from "openai";
 
 // Optional sharp import for image compression
 // Falls back to no-op if sharp is not available (e.g., in environments without native modules)
@@ -145,7 +161,8 @@ async function fetchImageAsBase64(url: string, maxRedirects = 5): Promise<string
         // Follow redirect with decrement
         const redirectUrl = res.headers.location;
         if (redirectUrl) {
-          fetchImageAsBase64(redirectUrl, maxRedirects - 1).then(resolve).catch(reject);
+          const nextUrl = new URL(redirectUrl, url).toString();
+          fetchImageAsBase64(nextUrl, maxRedirects - 1).then(resolve).catch(reject);
           return;
         }
       }
@@ -153,13 +170,17 @@ async function fetchImageAsBase64(url: string, maxRedirects = 5): Promise<string
         reject(new Error(`Failed to fetch image: HTTP ${res.statusCode}`));
         return;
       }
-      const contentType = res.headers["content-type"] || "image/png";
+      const rawContentType = res.headers["content-type"];
+      const resolvedContentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType;
+      const sanitizedContentType = (resolvedContentType?.split(";")[0]?.trim().toLowerCase() || "").startsWith("image/")
+        ? (resolvedContentType?.split(";")[0]?.trim() ?? "image/png")
+        : "image/png";
       const chunks: Buffer[] = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
         const buffer = Buffer.concat(chunks);
         const base64 = buffer.toString("base64");
-        resolve(`data:${contentType};base64,${base64}`);
+        resolve(`data:${sanitizedContentType};base64,${base64}`);
       });
       res.on("error", reject);
     }).on("error", reject);
@@ -235,12 +256,68 @@ function resolvePathInPrimaryRoot(filePath: string): string {
 }
 
 // Shared tool annotations
-const imageToolAnnotations = {
+const openaiToolAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: true,
 } as const;
+
+const localToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+const safeIdSchema = z.string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, {
+    message: "Invalid id: only letters, digits, '_' and '-' are allowed",
+  });
+
+function filenameMatchesId(filename: string, id: string): boolean {
+  const marker = `_${id}`;
+  const idx = filename.indexOf(marker);
+  if (idx === -1) return false;
+  const after = filename[idx + marker.length];
+  return after === "_" || after === "." || typeof after === "undefined";
+}
+
+async function resolveFilesByIds(opts: {
+  rootDir: string;
+  ids: string[];
+  allowedExtensions: string[];
+}): Promise<{ orderedFiles: string[]; missingIds: string[] }> {
+  const entries = await fs.promises.readdir(opts.rootDir, { withFileTypes: true });
+  const ids = Array.from(new Set(opts.ids));
+  const matchesById = new Map<string, string[]>();
+  for (const id of ids) matchesById.set(id, []);
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
+    const ext = path.extname(name).toLowerCase();
+    if (!opts.allowedExtensions.includes(ext)) continue;
+    for (const id of ids) {
+      if (!filenameMatchesId(name, id)) continue;
+      matchesById.get(id)!.push(path.resolve(opts.rootDir, name));
+      break;
+    }
+  }
+
+  const orderedFiles: string[] = [];
+  const missingIds: string[] = [];
+  for (const id of ids) {
+    const files = matchesById.get(id) ?? [];
+    files.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+    if (files.length === 0) missingIds.push(id);
+    orderedFiles.push(...files);
+  }
+
+  return { orderedFiles, missingIds };
+}
 
 // Shared types for image processing result (ImageData imported from compression.ts)
 interface ProcessedImagesResult {
@@ -304,11 +381,27 @@ function parseImageResponse(data: ImageApiDataItem[], format: ImageFormat): Imag
 
 // Helper: determine effective output mode and file path
 // responseFormat: "url" -> file/URL-based output, "b64_json" -> inline base64
+function sanitizeForFilename(value: string): string {
+  // Keep only broadly safe filename characters.
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function nowTimeTSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function buildDefaultOutputBaseName(opts: { methodName: string; id: string; timestampSeconds?: number | undefined }): string {
+  const ts = opts.timestampSeconds ?? nowTimeTSeconds();
+  const method = sanitizeForFilename(opts.methodName);
+  const id = sanitizeForFilename(opts.id);
+  return `output_${ts}_media-gen__${method}_${id}`;
+}
+
 function resolveOutputPath(
   images: ImageData[],
   responseFormat: "url" | "b64_json",
   file: string | undefined,
-  toolPrefix: string,
+  methodName: string,
 ): { effectiveOutput: string; effectiveFileOutput: string } {
   const maxResponseSizeEnv = process.env["MCP_MAX_CONTENT_BYTES"];
   const MAX_RESPONSE_SIZE = maxResponseSizeEnv && !Number.isNaN(parseInt(maxResponseSizeEnv, 10))
@@ -331,10 +424,10 @@ function resolveOutputPath(
 
   // Always generate a file path (we write files even for base64 output)
   if (!effectiveFileOutput) {
-    const unique = crypto.randomUUID();
-    const timestamp = Date.now();
     const fallbackExt = images[0]?.ext ?? "png";
-    effectiveFileOutput = path.join(primaryOutputDir, `${toolPrefix}_${timestamp}_${unique}.${fallbackExt}`);
+    const unique = crypto.randomUUID();
+    const baseName = buildDefaultOutputBaseName({ methodName, id: unique });
+    effectiveFileOutput = path.join(primaryOutputDir, `${baseName}.${fallbackExt}`);
   }
 
   if (!isPathInAllowedDirs(effectiveFileOutput)) {
@@ -359,6 +452,392 @@ function buildErrorResult(err: unknown, toolName: string): CallToolResult {
 // matching prefix is configured.
 function buildPublicUrlForFile(filePath: string): string | undefined {
   return mapFileToPublicUrl(filePath, normalizedBaseDirs, publicUrlPrefixes);
+}
+
+// Helper: get a standard OpenAI client for Videos endpoints.
+// AzureOpenAI compatibility for /videos is not assumed.
+function getOpenAIVideosClient(toolName: string): OpenAI {
+  const client = getOpenAIClient();
+  if (client instanceof AzureOpenAI) {
+    throw new Error(`${toolName} is not supported with AzureOpenAI (AZURE_OPENAI_API_KEY is set).`);
+  }
+  return client;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type VideoDownloadVariant = "video" | "thumbnail" | "spritesheet";
+type InputReferenceFit = "match" | "cover" | "contain" | "stretch";
+type InputReferenceBackground = "blur" | "black" | "white" | `#${string}`;
+
+function normalizeContentType(contentType: string | null): string | undefined {
+  const raw = contentType?.split(";")[0]?.trim().toLowerCase();
+  return raw && raw.length > 0 ? raw : undefined;
+}
+
+function normalizeImageMimeType(raw: string | undefined): string | undefined {
+  const normalized = raw?.split(";")[0]?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (!normalized.startsWith("image/")) return undefined;
+  return normalized;
+}
+
+function imageMimeToExt(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === "image/jpeg") return "jpg";
+  if (normalized === "image/jpg") return "jpg";
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  return normalized.split("/")[1] ?? "png";
+}
+
+function imageExtToMime(ext: string): string {
+  const normalized = ext.toLowerCase();
+  if (normalized === "jpg" || normalized === "jpeg") return "image/jpeg";
+  if (normalized === "png") return "image/png";
+  if (normalized === "webp") return "image/webp";
+  if (normalized === "gif") return "image/gif";
+  return "image/png";
+}
+
+function inferImageMimeFromFilePath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "image/png";
+}
+
+function parseHexColorToRgba(color: string): { r: number; g: number; b: number; alpha: number } {
+  const match = color.trim().match(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+  if (!match) {
+    throw new Error(`Invalid hex color: ${color}`);
+  }
+  const hex = match[1]!;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const alpha = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1;
+  return { r, g, b, alpha };
+}
+
+function parseBase64DataUrl(input: string): { mimeType: string | undefined; base64: string } | null {
+  if (!input.startsWith("data:")) return null;
+  const commaIndex = input.indexOf(",");
+  if (commaIndex === -1) return null;
+  const header = input.slice("data:".length, commaIndex);
+  const data = input.slice(commaIndex + 1);
+  const parts = header.split(";").map((p) => p.trim()).filter((p) => p.length > 0);
+  const mimeType = parts.length > 0 && parts[0]?.includes("/") ? parts[0] : undefined;
+  const isBase64 = parts.some((p) => p.toLowerCase() === "base64");
+  if (!isBase64) return null;
+  return { mimeType: mimeType ? mimeType.trim() : undefined, base64: data };
+}
+
+async function fetchBinaryFromUrl(url: string, maxRedirects = 5): Promise<{ buffer: Buffer; contentType?: string }> {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) {
+      reject(new Error("Too many redirects"));
+      return;
+    }
+    const protocol = url.startsWith("https://") ? https : http;
+    const req = protocol.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const redirectUrl = res.headers.location;
+        if (redirectUrl) {
+          const nextUrl = new URL(redirectUrl, url).toString();
+          fetchBinaryFromUrl(nextUrl, maxRedirects - 1).then(resolve).catch(reject);
+          return;
+        }
+      }
+      if (res.statusCode !== 200) {
+        reject(new Error(`Failed to fetch: HTTP ${res.statusCode}`));
+        return;
+      }
+      const rawContentType = res.headers["content-type"];
+      const contentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType;
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve({ buffer: Buffer.concat(chunks), contentType }));
+      res.on("error", reject);
+    }).on("error", reject);
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error(`Timeout fetching ${url}`));
+    });
+  });
+}
+
+function parseVideoSize(size: string): { width: number; height: number } {
+  const parts = size.split("x");
+  const width = Number(parts[0]);
+  const height = Number(parts[1]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`Invalid size: ${size}`);
+  }
+  return { width, height };
+}
+
+type SharpMetadata = { width?: number; height?: number };
+type SharpCompositeInput = { input: Buffer; gravity?: string };
+type SharpInstance = {
+  metadata: () => Promise<SharpMetadata>;
+  resize: (width: number, height: number, options?: Record<string, unknown>) => SharpInstance;
+  blur: (sigma?: number) => SharpInstance;
+  png: () => SharpInstance;
+  composite: (items: SharpCompositeInput[]) => SharpInstance;
+  toBuffer: () => Promise<Buffer>;
+};
+type SharpFactory = (input: Buffer) => SharpInstance;
+
+async function getSharpModule(): Promise<SharpFactory | null> {
+  try {
+    const sharpImport = await import("sharp");
+    const maybeDefault = (sharpImport as unknown as { default?: unknown }).default;
+    if (typeof maybeDefault === "function") return maybeDefault as unknown as SharpFactory;
+    if (typeof (sharpImport as unknown) === "function") return sharpImport as unknown as SharpFactory;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadImageBufferFromReference(
+  inputReference: string,
+  toolName: string,
+): Promise<{ buffer: Buffer; mimeType: string; ext: string }> {
+  if (isHttpUrl(inputReference)) {
+    if (!isUrlAllowedByEnv(inputReference)) {
+      throw new Error("input_reference URL is not allowed by MEDIA_GEN_URLS");
+    }
+    log.child(toolName).debug("fetching input_reference", { url: inputReference });
+    const { buffer, contentType } = await fetchBinaryFromUrl(inputReference);
+    const headerMime = normalizeImageMimeType(contentType);
+    const detectedFormat = await detectImageFormat(buffer);
+    const ext = imageMimeToExt(headerMime ?? imageExtToMime(detectedFormat));
+    const mimeType = headerMime ?? imageExtToMime(ext);
+    return { buffer, mimeType, ext };
+  }
+
+  if (isBase64Image(inputReference)) {
+    const parsed = parseBase64DataUrl(inputReference);
+    const mimeFromUrl = normalizeImageMimeType(parsed?.mimeType);
+    const base64 = (parsed ? parsed.base64 : inputReference).replace(/\s/g, "");
+    const buffer = Buffer.from(base64, "base64");
+    const detectedFormat = await detectImageFormat(buffer);
+    const ext = imageMimeToExt(mimeFromUrl ?? imageExtToMime(detectedFormat));
+    const mimeType = mimeFromUrl ?? imageExtToMime(ext);
+    return { buffer, mimeType, ext };
+  }
+
+  const resolved = resolvePathInPrimaryRoot(inputReference);
+  if (!isPathInAllowedDirs(resolved)) {
+    throw new Error("input_reference path is outside allowed MEDIA_GEN_DIRS roots");
+  }
+  const buffer = await fs.promises.readFile(resolved);
+  const detectedFormat = await detectImageFormat(buffer);
+  const ext = imageMimeToExt(imageExtToMime(detectedFormat));
+  const mimeType = imageExtToMime(ext);
+  return { buffer, mimeType, ext };
+}
+
+async function preprocessInputReferenceForVideo(
+  input: { buffer: Buffer; mimeType: string; ext: string },
+  targetSize: string,
+  fit: InputReferenceFit,
+  background: InputReferenceBackground,
+  toolName: string,
+): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+  const { width, height } = parseVideoSize(targetSize);
+
+  const sharp = await getSharpModule();
+  if (!sharp) {
+    if (fit === "match") {
+      return { buffer: input.buffer, mimeType: input.mimeType, filename: `input_reference.${input.ext}` };
+    }
+    throw new Error("sharp is required to resize/pad input_reference; install sharp or use input_reference_fit=match");
+  }
+
+  const meta = await sharp(input.buffer).metadata();
+  const srcW = meta.width;
+  const srcH = meta.height;
+
+  if (!srcW || !srcH) {
+    throw new Error("Unable to read input_reference dimensions");
+  }
+
+  const needsResize = srcW !== width || srcH !== height;
+
+  if (fit === "match") {
+    if (needsResize) {
+      throw new Error(
+        `input_reference is ${srcW}x${srcH} but requested video size is ${width}x${height}; set input_reference_fit=contain|cover|stretch to auto-fit`,
+      );
+    }
+    return { buffer: input.buffer, mimeType: input.mimeType, filename: `input_reference.${input.ext}` };
+  }
+
+  if (!needsResize) {
+    return { buffer: input.buffer, mimeType: input.mimeType, filename: `input_reference.${input.ext}` };
+  }
+
+  const targetName = `input_reference_${width}x${height}_${fit}.png`;
+
+  if (fit === "cover") {
+    const out = await sharp(input.buffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .png()
+      .toBuffer();
+    log.child(toolName).info("input_reference resized", { fit, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+    return { buffer: out, mimeType: "image/png", filename: targetName };
+  }
+
+  if (fit === "stretch") {
+    const out = await sharp(input.buffer)
+      .resize(width, height, { fit: "fill" })
+      .png()
+      .toBuffer();
+    log.child(toolName).info("input_reference resized", { fit, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+    return { buffer: out, mimeType: "image/png", filename: targetName };
+  }
+
+  // contain: pad/letterbox
+  if (background === "blur") {
+    const bg = await sharp(input.buffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .blur(50)
+      .png()
+      .toBuffer();
+    const fg = await sharp(input.buffer)
+      .resize(width, height, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+    const out = await sharp(bg)
+      .composite([{ input: fg, gravity: "centre" }])
+      .png()
+      .toBuffer();
+    log.child(toolName).info("input_reference resized", { fit, background, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+    return { buffer: out, mimeType: "image/png", filename: targetName };
+  }
+
+  const backgroundColor = background === "black" ? "#000000" : background === "white" ? "#FFFFFF" : background;
+  const rgba = parseHexColorToRgba(backgroundColor);
+  const out = await sharp(input.buffer)
+    .resize(width, height, { fit: "contain", background: rgba })
+    .png()
+    .toBuffer();
+  log.child(toolName).info("input_reference resized", { fit, background, from: `${srcW}x${srcH}`, to: `${width}x${height}` });
+  return { buffer: out, mimeType: "image/png", filename: targetName };
+}
+
+function inferVideoExtension(contentType: string | null, variant: VideoDownloadVariant): string {
+  const ct = normalizeContentType(contentType);
+  if (ct === "video/mp4" || ct === "application/mp4") return ".mp4";
+  if (ct === "image/png") return ".png";
+  if (ct === "image/jpeg") return ".jpg";
+  if (ct === "image/webp") return ".webp";
+  if (ct === "application/zip") return ".zip";
+
+  if (variant === "video") return ".mp4";
+  if (variant === "thumbnail") return ".png";
+  return ".zip";
+}
+
+function inferMimeType(contentType: string | null, ext: string): string {
+  const ct = normalizeContentType(contentType);
+  if (ct) return ct;
+
+  const normalizedExt = ext.toLowerCase();
+  if (normalizedExt === ".mp4") return "video/mp4";
+  if (normalizedExt === ".png") return "image/png";
+  if (normalizedExt === ".jpg" || normalizedExt === ".jpeg") return "image/jpeg";
+  if (normalizedExt === ".webp") return "image/webp";
+  if (normalizedExt === ".zip") return "application/zip";
+  return "application/octet-stream";
+}
+
+function resolveVideoBaseOutputPath(file: string | undefined, methodName: string, id: string | undefined): string {
+  if (file) return resolvePathInPrimaryRoot(file);
+  const effectiveId = id && id.trim().length > 0 ? id : crypto.randomUUID();
+  const baseName = buildDefaultOutputBaseName({ methodName, id: effectiveId });
+  return path.join(primaryOutputDir, baseName);
+}
+
+function buildVariantOutputPath(
+  basePath: string,
+  variant: VideoDownloadVariant,
+  ext: string,
+  multipleVariants: boolean,
+): string {
+  const parsed = path.parse(basePath);
+  const baseName = parsed.name || parsed.base;
+  if (multipleVariants) {
+    return path.join(parsed.dir, `${baseName}_${variant}${ext}`);
+  }
+  return path.join(parsed.dir, `${baseName}${ext}`);
+}
+
+async function downloadVideoAssetToFile(
+  openai: OpenAI,
+  videoId: string,
+  variant: VideoDownloadVariant,
+  basePath: string,
+  multipleVariants: boolean,
+): Promise<{ resourceLink: ResourceLink; filePath: string; uri: string; mimeType: string }> {
+  const response = await openai.videos.downloadContent(videoId, { variant });
+  const contentType = response.headers.get("content-type");
+  const ext = inferVideoExtension(contentType, variant);
+  const mimeType = inferMimeType(contentType, ext);
+
+  const filePath = buildVariantOutputPath(basePath, variant, ext, multipleVariants);
+  if (!isPathInAllowedDirs(filePath)) {
+    throw new Error(`Output path is outside allowed MEDIA_GEN_DIRS roots: ${filePath}`);
+  }
+
+  await ensureDirectoryWritable(filePath);
+
+  const buf = Buffer.from(await response.arrayBuffer());
+  await fs.promises.writeFile(filePath, buf);
+
+  const httpUrl = buildPublicUrlForFile(filePath);
+  const uri = httpUrl ?? `file://${filePath}`;
+  const resourceLink: ResourceLink = {
+    type: "resource_link",
+    uri,
+    name: path.basename(filePath),
+    mimeType,
+  };
+
+  return { resourceLink, filePath, uri, mimeType };
+}
+
+async function waitForVideoCompletion(
+  openai: OpenAI,
+  videoId: string,
+  opts: { timeoutMs?: number | undefined; pollIntervalMs?: number | undefined; toolName: string },
+): Promise<Awaited<ReturnType<OpenAI["videos"]["retrieve"]>>> {
+  const timeoutMs = opts.timeoutMs ?? 300000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 2000;
+  const start = Date.now();
+
+  while (Date.now() - start <= timeoutMs) {
+    const video = await openai.videos.retrieve(videoId);
+    if (video.status === "completed") return video;
+    if (video.status === "failed") {
+      const message = video.error?.message ?? "Video generation failed";
+      throw new Error(message);
+    }
+    await sleep(pollIntervalMs);
+  }
+
+  const last = await openai.videos.retrieve(videoId);
+  throw new Error(
+    `${opts.toolName} timeout after ${timeoutMs}ms (status=${last.status}, progress=${last.progress})`,
+  );
 }
 
 // Helper: write images to disk and build resource links + URLs
@@ -588,34 +1067,32 @@ function buildImageToolResult(
 }
 
 (async () => {
-  const server = new McpServer({
-    name: "media-gen-mcp",
-    version: "1.0.0"
-  }, {
-    capabilities: {
-      tools: { listChanged: false }
-    }
-  });
+	const server = new McpServer({
+	  name: "media-gen-mcp",
+	  version: "1.0.0"
+	}, {
+  capabilities: {
+    tools: { listChanged: false }
+  }
+});
 
   // Zod schema for openai-images-generate tool input
-  const openaiImagesGenerateBaseSchema = z.object({
-    prompt: z.string().max(32000),
-    background: z.enum(["transparent", "opaque", "auto"]).optional(),
-    model: z.literal("gpt-image-1").default("gpt-image-1"),
-    moderation: z.enum(["auto", "low"]).optional(),
-    n: z.number().int().min(1).max(10).optional(),
-    output_compression: z.number().int().min(0).max(100).optional(),
-    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
-    quality: z.enum(["auto", "high", "medium", "low"]).default("high"),
-    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024"),
-    user: z.string().optional(),
-    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
-      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-    response_format: z.enum(["url", "b64_json"]).default("url")
-      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
-    file: z.string().optional()
-      .describe("Path to save the image file, absolute or relative to the first MEDIA_GEN_DIRS entry (or the default root). If multiple images are generated (n > 1), an index will be appended (e.g., /path/to/image_1.png)."),
-  });
+	  const openaiImagesGenerateBaseSchema = z.object({
+	    prompt: z.string().max(32000),
+	    background: z.enum(["transparent", "opaque", "auto"]).optional(),
+	    model: z.literal("gpt-image-1").default("gpt-image-1"),
+	    moderation: z.enum(["auto", "low"]).optional(),
+	    n: z.number().int().min(1).max(10).optional(),
+	    output_compression: z.number().int().min(0).max(100).optional(),
+	    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
+	    quality: z.enum(["auto", "high", "medium", "low"]).default("high"),
+	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024"),
+	    user: z.string().optional(),
+	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
+	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
+	    response_format: z.enum(["url", "b64_json"]).default("url")
+	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+	  });
 
   // Full schema with refinement for validation inside the handler
   const openaiImagesGenerateSchema = openaiImagesGenerateBaseSchema;
@@ -628,29 +1105,25 @@ function buildImageToolResult(
       title: "OpenAI Images Generate",
       description: "Generate images from text prompts using OpenAI gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
       inputSchema: openaiImagesGenerateBaseSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIImagesGenerateToolArgs, _extra: unknown) => {
       try {
         const openai = getOpenAIClient();
-        const {
-          prompt,
-          background,
-          model = "gpt-image-1",
-          moderation,
-          n,
-          output_compression,
-          output_format,
-          quality,
-          size,
-          user,
-          tool_result = "resource_link",
-          response_format = "url",
-          file: fileRaw,
-        } = openaiImagesGenerateSchema.parse(args);
-        const file: string | undefined = fileRaw;
-
-        await validateOutputDirectory(file);
+	        const {
+	          prompt,
+	          background,
+	          model = "gpt-image-1",
+	          moderation,
+	          n,
+	          output_compression,
+	          output_format,
+	          quality,
+	          size,
+	          user,
+	          tool_result = "resource_link",
+	          response_format = "url",
+	        } = openaiImagesGenerateSchema.parse(args);
 
         // Enforce: if background is 'transparent', output_format must be 'png' or 'webp'
         if (background === "transparent" && output_format && !["png", "webp"].includes(output_format)) {
@@ -688,11 +1161,11 @@ function buildImageToolResult(
             ? rawFormat
             : "png";
 
-        const generateData = (result.data ?? []) as ImageApiDataItem[];
-        const images = parseImageResponse(generateData, effectiveFormat);
+	        const generateData = (result.data ?? []) as ImageApiDataItem[];
+	        const images = parseImageResponse(generateData, effectiveFormat);
 
-        const revisedPromptItems = extractRevisedPrompts(generateData);
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai_image");
+	        const revisedPromptItems = extractRevisedPrompts(generateData);
+	        const { effectiveFileOutput } = resolveOutputPath(images, response_format, undefined, "openai-images-generate");
 
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
@@ -741,24 +1214,22 @@ function buildImageToolResult(
   ]);
 
   // Base schema without refinement for server.tool signature
-  const openaiImagesEditBaseSchema = z.object({
-    image: imageFieldSchema.describe(
-      "Absolute image path, base64 string, or HTTP(S) URL to edit, or an array of such values (1-16 images).",
-    ),
-    prompt: z.string().max(32000).describe("A text description of the desired edit. Max 32000 chars."),
-    mask: z.string().optional().describe("Optional absolute path, base64 string, or HTTP(S) URL for a mask image (png < 4MB, same dimensions as the first image). Fully transparent areas indicate where to edit."),
-    model: z.literal("gpt-image-1").default("gpt-image-1"),
-    n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
-    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low) - only for gpt-image-1. Default: high."),
-    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024").describe("Size of the generated images. Default: 1024x1024."),
-    user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
-    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
-      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-    response_format: z.enum(["url", "b64_json"]).default("url")
-      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
-    file: z.string().optional()
-      .describe("Path to save the output image file, absolute or relative to the first MEDIA_GEN_DIRS entry. If n > 1, an index is appended."),
-  });
+	  const openaiImagesEditBaseSchema = z.object({
+	    image: imageFieldSchema.describe(
+	      "Absolute image path, base64 string, or HTTP(S) URL to edit, or an array of such values (1-16 images).",
+	    ),
+	    prompt: z.string().max(32000).describe("A text description of the desired edit. Max 32000 chars."),
+	    mask: z.string().optional().describe("Optional absolute path, base64 string, or HTTP(S) URL for a mask image (png < 4MB, same dimensions as the first image). Fully transparent areas indicate where to edit."),
+	    model: z.literal("gpt-image-1").default("gpt-image-1"),
+	    n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
+	    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low) - only for gpt-image-1. Default: high."),
+	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024").describe("Size of the generated images. Default: 1024x1024."),
+	    user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
+	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
+	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
+	    response_format: z.enum(["url", "b64_json"]).default("url")
+	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+	  });
 
   // Full schema with refinement for validation inside the handler
   const openaiImagesEditSchema = openaiImagesEditBaseSchema;
@@ -772,7 +1243,7 @@ function buildImageToolResult(
       title: "OpenAI Images Edit",
       description: "Edit images (inpainting, outpainting, compositing) from 1 to 16 inputs using OpenAI gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
       inputSchema: openaiImagesEditBaseSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: openaiToolAnnotations,
     },
     async (args: OpenAIImagesEditToolArgs, _extra: unknown) => {
       try {
@@ -817,11 +1288,8 @@ function buildImageToolResult(
           throw new Error("Invalid 'mask' input: Must be a non-empty file path or a base64-encoded string.");
         }
 
-        const openai = getOpenAIClient();
-        const { prompt, model = "gpt-image-1", n, quality, size, user, tool_result = "resource_link", response_format = "url", file: fileRaw } = validatedArgs;
-        const file: string | undefined = fileRaw;
-
-        await validateOutputDirectory(file);
+	        const openai = getOpenAIClient();
+	        const { prompt, model = "gpt-image-1", n, quality, size, user, tool_result = "resource_link", response_format = "url" } = validatedArgs;
 
         // Helper to convert input (path or base64) to toFile
         async function inputToFile(input: string, idx = 0) {
@@ -830,33 +1298,19 @@ function buildImageToolResult(
             if (!isPathInAllowedDirs(resolved)) {
               throw new Error("Image path is outside allowed MEDIA_GEN_DIRS roots");
             }
-            // File path: infer mime type from extension
-            const ext = resolved.split('.').pop()?.toLowerCase();
-            let mime = "image/png";
-            if (ext === "jpg" || ext === "jpeg") mime = "image/jpeg";
-            else if (ext === "webp") mime = "image/webp";
-            else if (ext === "png") mime = "image/png";
-            // else default to png
+            const mime = inferImageMimeFromFilePath(resolved);
             return await toFile(fs.createReadStream(resolved), undefined, { type: mime });
           } else {
             // Base64 or data URL
-            let base64 = input;
-            let mime = "image/png";
-            if (input.startsWith("data:image/")) {
-              // data URL
-              const match = input.match(/^data:(image\/\w+);base64,(.*)$/);
-              if (match && match.length >= 3) {
-                const mimeGroup = match[1];
-                const base64Group = match[2];
-                if (mimeGroup && base64Group) {
-                  mime = mimeGroup;
-                  base64 = base64Group;
-                }
-              }
-            }
+            const parsed = parseBase64DataUrl(input);
+            const mimeFromUrl = normalizeImageMimeType(parsed?.mimeType);
+            const base64 = (parsed ? parsed.base64 : input).replace(/\s/g, "");
             const buffer = Buffer.from(base64, "base64");
-            const [, subtype = "png"] = mime.split("/");
-            return await toFile(buffer, `input_${idx}.${subtype}`, { type: mime });
+            const detectedFormat = await detectImageFormat(buffer);
+            const detectedExt = imageMimeToExt(imageExtToMime(detectedFormat));
+            const mime = mimeFromUrl ?? imageExtToMime(detectedExt);
+            const ext = imageMimeToExt(mime);
+            return await toFile(buffer, `input_${idx}.${ext}`, { type: mime });
           }
         }
 
@@ -893,11 +1347,11 @@ function buildImageToolResult(
         const editResult = result as unknown as ImageGenerateResult;
         const editData = (editResult.data ?? []) as ImageApiDataItem[];
 
-        // gpt-image-1 edit always returns png
-        const images = parseImageResponse(editData, "png");
+	        // gpt-image-1 edit always returns png
+	        const images = parseImageResponse(editData, "png");
 
-        const revisedPromptItems = extractRevisedPrompts(editData);
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "openai_image_edit");
+	        const revisedPromptItems = extractRevisedPrompts(editData);
+	        const { effectiveFileOutput } = resolveOutputPath(images, response_format, undefined, "openai-images-edit");
 
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
@@ -922,6 +1376,311 @@ function buildImageToolResult(
         return buildErrorResult(err, "openai-images-edit");
       }
     }
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OpenAI Videos tools
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  server.registerTool(
+    "openai-videos-create",
+    {
+      title: "OpenAI Videos Create",
+      description:
+        "Create a video generation job using the OpenAI Videos API. Returns structuredContent with the OpenAI Video job object, and (optionally) resource_link items for downloaded assets.",
+      inputSchema: openaiVideosCreateSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: OpenAIVideosCreateArgs, _extra: unknown) => {
+      try {
+        const validated = openaiVideosCreateSchema.parse(args);
+	        const {
+	          prompt,
+	          input_reference,
+	          input_reference_fit,
+	          input_reference_background,
+	          model,
+	          seconds,
+	          size,
+	          wait_for_completion,
+	          timeout_ms,
+	          poll_interval_ms,
+	          download_variants,
+	        } = validated;
+
+        const openai = getOpenAIVideosClient("openai-videos-create");
+
+        const content: ContentBlock[] = [];
+
+        let inputReferenceUploadable: Uploadable | undefined;
+        const effectiveSize = input_reference ? (size ?? ("720x1280" as const)) : size;
+
+        if (input_reference) {
+          const targetSize = size ?? ("720x1280" as const);
+          const loaded = await loadImageBufferFromReference(input_reference, "openai-videos-create");
+          const processed = await preprocessInputReferenceForVideo(
+            loaded,
+            targetSize,
+            (input_reference_fit ?? "contain") as InputReferenceFit,
+            (input_reference_background ?? "blur") as InputReferenceBackground,
+            "openai-videos-create",
+          );
+          inputReferenceUploadable = await toFile(processed.buffer, processed.filename, { type: processed.mimeType });
+        }
+
+        const createParams: Parameters<typeof openai.videos.create>[0] = {
+          prompt,
+          ...(inputReferenceUploadable ? { input_reference: inputReferenceUploadable } : {}),
+          ...(model ? { model } : {}),
+          ...(seconds ? { seconds } : {}),
+          ...(effectiveSize ? { size: effectiveSize } : {}),
+        };
+
+        const created = await openai.videos.create(createParams);
+
+        content.push({
+          type: "text" as const,
+          text: `video_id=${created.id} status=${created.status} progress=${created.progress}`,
+        });
+
+        if (!wait_for_completion) {
+          content.push({ type: "text" as const, text: JSON.stringify(created, null, 2) });
+          return {
+            content,
+            structuredContent: created as unknown as Record<string, unknown>,
+          };
+        }
+
+        const finalVideo = await waitForVideoCompletion(openai, created.id, {
+          timeoutMs: timeout_ms,
+          pollIntervalMs: poll_interval_ms,
+          toolName: "openai-videos-create",
+        });
+
+	        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
+	        const multipleVariants = variants.length > 1;
+	        const basePath = resolveVideoBaseOutputPath(undefined, "openai-videos-create", finalVideo.id);
+	        await validateOutputDirectory(basePath);
+
+        const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
+        for (const variant of variants) {
+          const downloaded = await downloadVideoAssetToFile(openai, finalVideo.id, variant, basePath, multipleVariants);
+          content.push(downloaded.resourceLink);
+          assets.push({
+            variant,
+            uri: downloaded.uri,
+            mimeType: downloaded.mimeType,
+            file: `file://${downloaded.filePath}`,
+          });
+        }
+
+        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets }, null, 2) });
+        content.push({ type: "text" as const, text: JSON.stringify(finalVideo, null, 2) });
+
+        return {
+          content,
+          structuredContent: finalVideo as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-create");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-remix",
+    {
+      title: "OpenAI Videos Remix",
+      description:
+        "Create a remix video job from an existing video_id. Returns structuredContent with the OpenAI Video job object, and (optionally) resource_link items for downloaded assets.",
+      inputSchema: openaiVideosRemixSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: OpenAIVideosRemixArgs) => {
+      try {
+        const validated = openaiVideosRemixSchema.parse(args);
+	        const {
+	          video_id,
+	          prompt,
+	          wait_for_completion,
+	          timeout_ms,
+	          poll_interval_ms,
+	          download_variants,
+	        } = validated;
+
+        const openai = getOpenAIVideosClient("openai-videos-remix");
+
+        const content: ContentBlock[] = [];
+        const remixed = await openai.videos.remix(video_id, { prompt });
+
+        content.push({
+          type: "text" as const,
+          text: `video_id=${remixed.id} status=${remixed.status} progress=${remixed.progress} remixed_from=${remixed.remixed_from_video_id ?? video_id}`,
+        });
+
+        if (!wait_for_completion) {
+          content.push({ type: "text" as const, text: JSON.stringify(remixed, null, 2) });
+          return {
+            content,
+            structuredContent: remixed as unknown as Record<string, unknown>,
+          };
+        }
+
+        const finalVideo = await waitForVideoCompletion(openai, remixed.id, {
+          timeoutMs: timeout_ms,
+          pollIntervalMs: poll_interval_ms,
+          toolName: "openai-videos-remix",
+        });
+
+	        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
+	        const multipleVariants = variants.length > 1;
+	        const basePath = resolveVideoBaseOutputPath(undefined, "openai-videos-remix", finalVideo.id);
+	        await validateOutputDirectory(basePath);
+
+        const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
+        for (const variant of variants) {
+          const downloaded = await downloadVideoAssetToFile(openai, finalVideo.id, variant, basePath, multipleVariants);
+          content.push(downloaded.resourceLink);
+          assets.push({
+            variant,
+            uri: downloaded.uri,
+            mimeType: downloaded.mimeType,
+            file: `file://${downloaded.filePath}`,
+          });
+        }
+
+        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets }, null, 2) });
+        content.push({ type: "text" as const, text: JSON.stringify(finalVideo, null, 2) });
+
+        return {
+          content,
+          structuredContent: finalVideo as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-remix");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-list",
+    {
+      title: "OpenAI Videos List",
+      description:
+        "List video jobs using the OpenAI Videos API. Returns structuredContent with the OpenAI list response shape { data, has_more, last_id }.",
+      inputSchema: openaiVideosListSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: OpenAIVideosListArgs) => {
+      try {
+        const validated = openaiVideosListSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-list");
+
+        const page = await openai.videos.list({
+          ...(validated.after ? { after: validated.after } : {}),
+          ...(validated.limit ? { limit: validated.limit } : {}),
+          ...(validated.order ? { order: validated.order } : {}),
+        });
+
+        const structured = {
+          data: page.data,
+          has_more: page.has_more,
+          last_id: page.last_id,
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-list");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-retrieve",
+    {
+      title: "OpenAI Videos Retrieve",
+      description: "Retrieve a video job by id using the OpenAI Videos API.",
+      inputSchema: openaiVideosRetrieveSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: OpenAIVideosRetrieveArgs) => {
+      try {
+        const validated = openaiVideosRetrieveSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-retrieve");
+        const video = await openai.videos.retrieve(validated.video_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(video, null, 2) }],
+          structuredContent: video as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-retrieve");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-delete",
+    {
+      title: "OpenAI Videos Delete",
+      description: "Delete a video job by id using the OpenAI Videos API.",
+      inputSchema: openaiVideosDeleteSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: OpenAIVideosDeleteArgs) => {
+      try {
+        const validated = openaiVideosDeleteSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-delete");
+        const deleted = await openai.videos.delete(validated.video_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(deleted, null, 2) }],
+          structuredContent: deleted as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-delete");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-retrieve-content",
+    {
+      title: "OpenAI Videos Retrieve Content",
+      description:
+        "Retrieve a video asset (video/thumbnail/spritesheet) for a completed job, write it under MEDIA_GEN_DIRS, and return resource_link(s).",
+      inputSchema: openaiVideosRetrieveContentSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: OpenAIVideosRetrieveContentArgs) => {
+      try {
+        const validated = openaiVideosRetrieveContentSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-retrieve-content");
+
+	        const video = await openai.videos.retrieve(validated.video_id);
+	        if (video.status !== "completed") {
+	          throw new Error(`Cannot retrieve content: video status is ${video.status} (progress=${video.progress})`);
+	        }
+
+	        const variant = (validated.variant ?? "video") as VideoDownloadVariant;
+	        const basePath = resolveVideoBaseOutputPath(undefined, "openai-videos-retrieve-content", video.id);
+	        await validateOutputDirectory(basePath);
+
+        const downloaded = await downloadVideoAssetToFile(openai, video.id, variant, basePath, false);
+
+        return {
+          content: [
+            downloaded.resourceLink,
+            { type: "text", text: JSON.stringify({ video_id: video.id, variant, uri: downloaded.uri }, null, 2) },
+            { type: "text", text: JSON.stringify(video, null, 2) },
+          ],
+          structuredContent: video as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-retrieve-content");
+      }
+    },
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -959,6 +1718,8 @@ function buildImageToolResult(
   const fetchImagesSchema = z.object({
     sources: z.array(z.string()).min(1).max(20).optional()
       .describe("Array of image sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 images. Mutually exclusive with 'n'."),
+    ids: z.array(safeIdSchema).min(1).max(50).optional()
+      .describe("Array of image IDs to fetch by filename match (looks for filenames containing _{id}_ or _{id}. under the primary MEDIA_GEN_DIRS[0] directory). Mutually exclusive with 'sources' and 'n'."),
     n: z.number().int().min(1).max(50).optional()
       .describe("When set, returns the last N image files from the primary MEDIA_GEN_DIRS[0] directory (most recently modified first). Mutually exclusive with 'sources'."),
     compression: z.object({
@@ -987,20 +1748,24 @@ function buildImageToolResult(
       title: "Fetch Images",
       description: "Fetch and process images from URLs or local file paths. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
       inputSchema: fetchImagesSchema.shape,
-      annotations: imageToolAnnotations,
+      annotations: localToolAnnotations,
     },
     async (args: FetchImagesArgs) => {
       try {
-        const { sources, n, compression, tool_result = "resource_link", response_format, file } = fetchImagesSchema.parse(args);
+        const { sources, ids, n, compression, tool_result = "resource_link", response_format, file } = fetchImagesSchema.parse(args);
 
         const hasSources = Array.isArray(sources) && sources.length > 0;
-        if (hasSources && typeof n === "number") {
-          throw new Error("'sources' and 'n' are mutually exclusive");
-        }
+        const hasIds = Array.isArray(ids) && ids.length > 0;
+        const hasN = typeof n === "number";
+        if (hasSources && hasN) throw new Error("'sources' and 'n' are mutually exclusive");
+        if (hasSources && hasIds) throw new Error("'sources' and 'ids' are mutually exclusive");
+        if (hasIds && hasN) throw new Error("'ids' and 'n' are mutually exclusive");
+        if (hasIds && typeof file === "string") throw new Error("'file' is not supported when using 'ids' (no new files are created)");
+        if (hasIds && compression) throw new Error("'compression' is not supported when using 'ids' (returns existing files as-is)");
 
         let activeSources: string[] = [];
 
-        if (typeof n === "number") {
+        if (hasN) {
           if (process.env["MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES"] !== "true") {
             throw new Error("Fetching last N images is disabled by MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES");
           }
@@ -1027,10 +1792,81 @@ function buildImageToolResult(
               isError: true,
             };
           }
+        } else if (hasIds) {
+          const root = primaryOutputDir;
+          const imageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+          const idList = ids ?? [];
+          const resolved = await resolveFilesByIds({ rootDir: root, ids: idList, allowedExtensions: imageExtensions });
+          activeSources = resolved.orderedFiles;
+          if (activeSources.length === 0) {
+            return {
+              content: [{ type: "text", text: `No images found for ids in ${root}` }],
+              isError: true,
+            };
+          }
+
+          const results = await Promise.allSettled(
+            activeSources.map(async (filePath) => {
+              const image = await readAndProcessImage(filePath);
+              const fileUri = `file://${filePath}`;
+              const httpUrl = buildPublicUrlForFile(filePath) ?? "";
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri: fileUri,
+                name: path.basename(filePath),
+                mimeType: image.mimeType,
+              };
+              return { image, fileUri, httpUrl, resourceLink };
+            }),
+          );
+
+          const images: ImageData[] = [];
+          const files: string[] = [];
+          const urls: string[] = [];
+          const resourceLinks: ResourceLink[] = [];
+          const errors: string[] = [];
+
+          if (resolved.missingIds.length > 0) {
+            errors.push(...resolved.missingIds.map((id) => `No images found for id: ${id}`));
+          }
+
+          results.forEach((result, i) => {
+            if (result.status === "fulfilled") {
+              images.push(result.value.image);
+              files.push(result.value.fileUri);
+              urls.push(result.value.httpUrl);
+              resourceLinks.push(result.value.resourceLink);
+            } else {
+              const reason = result.reason;
+              const message = reason instanceof Error ? reason.message : String(reason);
+              errors.push(`[${i}] ${activeSources[i]}: ${message}`);
+            }
+          });
+
+          if (images.length === 0) {
+            return {
+              content: [{ type: "text", text: `All fetches failed:\n${errors.join("\n")}` }],
+              isError: true,
+            };
+          }
+
+          const processedResult: ProcessedImagesResult = { files, urls, resourceLinks };
+          const revisedPromptItems: TextContent[] = errors.length > 0
+            ? [{ type: "text", text: `Errors (${errors.length}):\n${errors.join("\n")}` }]
+            : [];
+
+          return buildImageToolResult(
+            images,
+            processedResult,
+            revisedPromptItems,
+            "fetch-images",
+            tool_result,
+            response_format,
+          );
         } else if (hasSources) {
           activeSources = sources;
         } else {
-          throw new Error("Either 'sources' or 'n' must be provided");
+          throw new Error("Either 'sources', 'ids', or 'n' must be provided");
         }
 
         let compressionOpts: CompressionOptions | undefined;
@@ -1153,7 +1989,7 @@ function buildImageToolResult(
           };
         }
 
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "fetch_images");
+        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "fetch-images");
         const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
 
         const revisedPromptItems: TextContent[] = errors.length > 0
@@ -1176,8 +2012,296 @@ function buildImageToolResult(
     },
   );
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // fetch-videos: Fetch videos from URLs or local file paths
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchVideosSchema = z.object({
+    sources: z.array(z.string()).min(1).max(20).optional()
+      .describe("Array of video sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 videos. Mutually exclusive with 'n'."),
+    ids: z.array(safeIdSchema).min(1).max(50).optional()
+      .describe("Array of video IDs to fetch by filename match (looks for filenames containing _{id}_ or _{id}. under the primary MEDIA_GEN_DIRS[0] directory). Mutually exclusive with 'sources' and 'n'."),
+    n: z.number().int().min(1).max(50).optional()
+      .describe("When set, returns the last N video files from the primary MEDIA_GEN_DIRS[0] directory (most recently modified first). Mutually exclusive with 'sources'."),
+    file: z.string().optional()
+      .describe("Base path for output files (when downloading from URLs), absolute or relative to the first MEDIA_GEN_DIRS entry. If multiple videos are downloaded, an index suffix is added."),
+  });
+
+  type FetchVideosArgs = z.input<typeof fetchVideosSchema>;
+
+  function inferVideoMimeTypeFromExt(extWithDot: string): string {
+    const ext = extWithDot.toLowerCase();
+    if (ext === ".mp4") return "video/mp4";
+    if (ext === ".webm") return "video/webm";
+    if (ext === ".mov") return "video/quicktime";
+    if (ext === ".m4v") return "video/x-m4v";
+    if (ext === ".mkv") return "video/x-matroska";
+    if (ext === ".avi") return "video/x-msvideo";
+    return "application/octet-stream";
+  }
+
+  function inferVideoExtFromUrlOrContentType(url: string, contentType: string | undefined): string {
+    const ct = normalizeContentType(contentType ?? null);
+    if (ct === "video/mp4" || ct === "application/mp4") return ".mp4";
+    if (ct === "video/webm") return ".webm";
+    if (ct === "video/quicktime") return ".mov";
+
+    const urlPath = (() => {
+      try {
+        return new URL(url).pathname;
+      } catch {
+        return url;
+      }
+    })();
+    const ext = path.extname(urlPath);
+    if (ext) return ext;
+    return ".mp4";
+  }
+
+  function buildIndexedOutputPath(basePath: string, idx: number, extWithDot: string, total: number): string {
+    const parsed = path.parse(basePath);
+    const baseName = parsed.name || parsed.base;
+    const ext = parsed.ext || extWithDot;
+    if (total > 1) {
+      return path.join(parsed.dir, `${baseName}_${idx + 1}${ext}`);
+    }
+    return path.join(parsed.dir, `${baseName}${ext}`);
+  }
+
+  server.registerTool(
+    "fetch-videos",
+    {
+      title: "Fetch Videos",
+      description:
+        "Fetch videos from URLs or local file paths. Returns MCP CallToolResult with resource_link items and structuredContent listing resolved files/URLs.",
+      inputSchema: fetchVideosSchema.shape,
+      annotations: localToolAnnotations,
+    },
+    async (args: FetchVideosArgs) => {
+      try {
+        const { sources, ids, n, file } = fetchVideosSchema.parse(args);
+
+        const hasSources = Array.isArray(sources) && sources.length > 0;
+        const hasIds = Array.isArray(ids) && ids.length > 0;
+        const hasN = typeof n === "number";
+        if (hasSources && hasN) throw new Error("'sources' and 'n' are mutually exclusive");
+        if (hasSources && hasIds) throw new Error("'sources' and 'ids' are mutually exclusive");
+        if (hasIds && hasN) throw new Error("'ids' and 'n' are mutually exclusive");
+        if (hasIds && typeof file === "string") throw new Error("'file' is not supported when using 'ids' (no new files are created)");
+
+        const videoExtensions = [".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi"];
+
+        let activeSources: string[] = [];
+        let idLookupErrors: string[] = [];
+        if (hasN) {
+          if (process.env["MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS"] !== "true") {
+            throw new Error("Fetching last N videos is disabled by MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS");
+          }
+
+          const root = primaryOutputDir;
+          const entries = await fs.promises.readdir(root, { withFileTypes: true });
+          const candidates: { path: string; mtimeMs: number }[] = [];
+
+          for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            if (!videoExtensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) continue;
+            const absPath = path.resolve(root, entry.name);
+            const stat = await fs.promises.stat(absPath);
+            candidates.push({ path: absPath, mtimeMs: stat.mtimeMs });
+          }
+
+          candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+          activeSources = candidates.slice(0, n).map((c) => c.path);
+
+          if (activeSources.length === 0) {
+            return {
+              content: [{ type: "text", text: `No videos found in ${root}` }],
+              isError: true,
+            };
+          }
+        } else if (hasIds) {
+          const root = primaryOutputDir;
+          const idList = ids ?? [];
+          const resolved = await resolveFilesByIds({ rootDir: root, ids: idList, allowedExtensions: videoExtensions });
+          activeSources = resolved.orderedFiles;
+          idLookupErrors = resolved.missingIds.map((id) => `No videos found for id: ${id}`);
+          if (activeSources.length === 0) {
+            return {
+              content: [{ type: "text", text: `No videos found for ids in ${root}` }],
+              isError: true,
+            };
+          }
+        } else if (hasSources) {
+          activeSources = sources;
+        } else {
+          throw new Error("Either 'sources', 'ids', or 'n' must be provided");
+        }
+
+        const resolvedBasePath = file ? resolvePathInPrimaryRoot(file) : undefined;
+        if (resolvedBasePath) {
+          await validateOutputDirectory(resolvedBasePath);
+        }
+
+        const results = await Promise.allSettled(
+          activeSources.map(async (source, idx) => {
+            // 1) Prefer reuse of existing local files mapped from public URL prefixes (or direct paths)
+            const mappedLocal = resolveSourceToLocalPathIfExisting(source);
+            if (mappedLocal) {
+              const ext = path.extname(mappedLocal).toLowerCase();
+              if (!videoExtensions.includes(ext)) {
+                throw new Error(`Unsupported video file extension: ${ext || "<none>"}`);
+              }
+              const httpUrl = buildPublicUrlForFile(mappedLocal);
+              const fileUri = `file://${mappedLocal}`;
+              const uri = httpUrl ?? fileUri;
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri,
+                name: path.basename(mappedLocal),
+                mimeType: inferVideoMimeTypeFromExt(ext),
+              };
+              return {
+                source,
+                filePath: mappedLocal,
+                fileUri,
+                uri,
+                mimeType: resourceLink.mimeType ?? "application/octet-stream",
+                resourceLink,
+                downloaded: false,
+              };
+            }
+
+            // 2) Download from URL
+            if (!isHttpUrl(source)) {
+              const resolvedSource = resolvePathInPrimaryRoot(source);
+              if (!isPathInAllowedDirs(resolvedSource)) {
+                throw new Error("Video path is outside allowed MEDIA_GEN_DIRS roots");
+              }
+              const ext = path.extname(resolvedSource).toLowerCase();
+              if (!videoExtensions.includes(ext)) {
+                throw new Error(`Unsupported video file extension: ${ext || "<none>"}`);
+              }
+              await fs.promises.stat(resolvedSource);
+
+              const httpUrl = buildPublicUrlForFile(resolvedSource);
+              const fileUri = `file://${resolvedSource}`;
+              const uri = httpUrl ?? fileUri;
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri,
+                name: path.basename(resolvedSource),
+                mimeType: inferVideoMimeTypeFromExt(ext),
+              };
+              return {
+                source,
+                filePath: resolvedSource,
+                fileUri,
+                uri,
+                mimeType: resourceLink.mimeType ?? "application/octet-stream",
+                resourceLink,
+                downloaded: false,
+              };
+            }
+
+            if (!isUrlAllowedByEnv(source)) {
+              throw new Error("Video URL is not allowed by MEDIA_GEN_URLS");
+            }
+
+            const { buffer, contentType } = await fetchBinaryFromUrl(source);
+            const ext = inferVideoExtFromUrlOrContentType(source, contentType);
+            const outPath = resolvedBasePath
+              ? buildIndexedOutputPath(resolvedBasePath, idx, ext, activeSources.length)
+              : path.join(primaryOutputDir, `${buildDefaultOutputBaseName({ methodName: "fetch-videos", id: crypto.randomUUID() })}${ext}`);
+
+            await validateOutputDirectory(outPath);
+            await fs.promises.writeFile(outPath, buffer);
+
+            const httpUrl = buildPublicUrlForFile(outPath);
+            const fileUri = `file://${outPath}`;
+            const uri = httpUrl ?? fileUri;
+            const mimeType = normalizeContentType(contentType ?? null) ?? inferVideoMimeTypeFromExt(ext);
+
+            const resourceLink: ResourceLink = {
+              type: "resource_link",
+              uri,
+              name: path.basename(outPath),
+              mimeType,
+            };
+
+            return {
+              source,
+              filePath: outPath,
+              fileUri,
+              uri,
+              mimeType,
+              resourceLink,
+              downloaded: true,
+            };
+          }),
+        );
+
+        const ok: Array<{
+          source: string;
+          uri: string;
+          file: string;
+          mimeType: string;
+          name: string;
+          downloaded: boolean;
+        }> = [];
+        const content: ContentBlock[] = [];
+        const errors: string[] = [];
+
+        errors.push(...idLookupErrors);
+
+        results.forEach((result, i) => {
+          if (result.status === "fulfilled") {
+            content.push(result.value.resourceLink);
+            ok.push({
+              source: result.value.source,
+              uri: result.value.uri,
+              file: result.value.fileUri,
+              mimeType: result.value.mimeType,
+              name: path.basename(result.value.filePath),
+              downloaded: result.value.downloaded,
+            });
+          } else {
+            const reason = result.reason;
+            const message = reason instanceof Error ? reason.message : String(reason);
+            errors.push(`[${i}] ${activeSources[i]}: ${message}`);
+          }
+        });
+
+        if (ok.length === 0) {
+          return {
+            content: [{ type: "text", text: `All fetches failed:\n${errors.join("\n")}` }],
+            isError: true,
+          };
+        }
+
+        if (errors.length > 0) {
+          content.push({ type: "text", text: `Errors (${errors.length}/${activeSources.length}):\n${errors.join("\n")}` });
+        }
+
+        const structured = {
+          data: ok,
+          ...(errors.length > 0 ? { errors } : {}),
+        };
+        content.push({ type: "text", text: JSON.stringify(structured, null, 2) });
+
+        log.child("fetch-videos").info("processed", { success: ok.length, total: activeSources.length });
+
+        return {
+          content,
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "fetch-videos");
+      }
+    },
+  );
+
   // ---------------------------------------------------------------------------
-  // test-tool: Debug MCP result format with predictable sample images
+  // test-images: Debug MCP result format with predictable sample images
   // ---------------------------------------------------------------------------
   // Enabled only when MEDIA_GEN_MCP_TEST_SAMPLE_DIR is set. Does NOT create new
   // files; instead it enumerates existing sample files and maps them into
@@ -1185,31 +2309,25 @@ function buildImageToolResult(
 
   const testSampleDir = process.env["MEDIA_GEN_MCP_TEST_SAMPLE_DIR"];
 
-  log.child("test-tool").info("MEDIA_GEN_MCP_TEST_SAMPLE_DIR resolved", {
+  log.child("test-images").info("MEDIA_GEN_MCP_TEST_SAMPLE_DIR resolved", {
     isSet: !!testSampleDir,
     testSampleDir,
   });
 
   if (testSampleDir) {
-    log.child("test-tool").info("registering test-tool", { testSampleDir });
+    log.child("test-images").info("registering test-images", { testSampleDir });
 
     server.registerTool(
-      "test-tool",
+      "test-images",
       {
-        title: "Test Tool",
+        title: "Test Images",
         description: `Debug MCP result format using existing sample files from ${testSampleDir}. Reads up to 10 images and returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param). No new files are created.`,
-        inputSchema: testToolSchema.shape,
-        annotations: {
-          title: "Test Tool",
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: false,
-          openWorldHint: true,
-        },
+        inputSchema: testImagesSchema.shape,
+        annotations: localToolAnnotations,
       },
-      async (args: TestToolArgs) => {
+      async (args: TestImagesArgs) => {
         try {
-          const { tool_result = "resource_link", response_format = "url", compression } = testToolSchema.parse(args);
+          const { tool_result = "resource_link", response_format = "url", compression } = testImagesSchema.parse(args);
 
           // Read sample images (max 10, no sorting — predictable order from fs)
           const entries = await fs.promises.readdir(testSampleDir, { withFileTypes: true });
@@ -1286,7 +2404,7 @@ function buildImageToolResult(
             quality: "high",
           };
 
-          log.child("test-tool").info("enumerated sample images", {
+          log.child("test-images").info("enumerated sample images", {
             count: imageFiles.length,
             tool_result,
             response_format,
@@ -1296,18 +2414,18 @@ function buildImageToolResult(
             images,
             processedResult,
             revisedPromptItems,
-            "test-tool",
+            "test-images",
             tool_result,
             response_format,
             mockApiResponse,
           );
         } catch (err) {
-          return buildErrorResult(err, "test-tool");
+          return buildErrorResult(err, "test-images");
         }
       },
     );
 
-    log.info("test-tool enabled", { sample: testSampleDir });
+    log.info("test-images enabled", { sample: testSampleDir });
   }
 
   const transport = new StdioServerTransport();
