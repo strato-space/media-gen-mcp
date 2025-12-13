@@ -2,12 +2,19 @@ import { describe, it, expect } from "vitest";
 import {
   openaiImagesGenerateSchema,
   openaiImagesEditSchema,
+  openaiVideosCreateSchema,
+  openaiVideosRemixSchema,
+  openaiVideosListSchema,
+  openaiVideosRetrieveSchema,
+  openaiVideosDeleteSchema,
+  openaiVideosDownloadContentSchema,
   fetchImagesSchema,
   fetchImagesClientSchema,
   testToolSchema,
   compressionSchema,
   type OpenAIImagesGenerateArgs,
   type OpenAIImagesEditArgs,
+  type OpenAIVideosCreateArgs,
   type FetchImagesArgs,
   type FetchImagesClientArgs,
   type TestToolArgs,
@@ -187,6 +194,105 @@ describe("schemas module", () => {
     it("validates tool_result options", () => {
       expect(openaiImagesEditSchema.safeParse({ prompt: "Edit", image: "/tmp/img.png", tool_result: "resource_link" }).success).toBe(true);
       expect(openaiImagesEditSchema.safeParse({ prompt: "Edit", image: "/tmp/img.png", tool_result: "image" }).success).toBe(true);
+    });
+  });
+
+  describe("openaiVideosCreateSchema (openai-videos-create)", () => {
+    it("validates minimal valid input and applies defaults", () => {
+      const input: OpenAIVideosCreateArgs = { prompt: "A cinematic sunset over mountains" };
+      const result = openaiVideosCreateSchema.safeParse(input);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.model).toBe("sora-2");
+        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.poll_interval_ms).toBe(2000);
+        expect(result.data.download_variants).toEqual(["video"]);
+      }
+    });
+
+    it("rejects invalid model", () => {
+      const result = openaiVideosCreateSchema.safeParse({
+        prompt: "test",
+        model: "not-a-model",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects invalid seconds/size", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", seconds: "5" }).success).toBe(false);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", size: "999x999" }).success).toBe(false);
+    });
+
+    it("rejects empty input_reference when provided", () => {
+      const result = openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference: "" });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects relative file path", () => {
+      const result = openaiVideosCreateSchema.safeParse({ prompt: "test", file: "./out" });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosRemixSchema (openai-videos-remix)", () => {
+    it("validates minimal remix input and defaults", () => {
+      const result = openaiVideosRemixSchema.safeParse({ video_id: "vid_123", prompt: "Make it noir" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.poll_interval_ms).toBe(2000);
+        expect(result.data.download_variants).toEqual(["video"]);
+      }
+    });
+
+    it("rejects empty video_id", () => {
+      expect(openaiVideosRemixSchema.safeParse({ video_id: "", prompt: "x" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosListSchema (openai-videos-list)", () => {
+    it("validates list params", () => {
+      expect(openaiVideosListSchema.safeParse({}).success).toBe(true);
+      expect(openaiVideosListSchema.safeParse({ after: "vid_123", limit: 10, order: "desc" }).success).toBe(true);
+    });
+
+    it("rejects empty after", () => {
+      expect(openaiVideosListSchema.safeParse({ after: "" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosRetrieveSchema (openai-videos-retrieve)", () => {
+    it("requires non-empty video_id", () => {
+      expect(openaiVideosRetrieveSchema.safeParse({ video_id: "vid_123" }).success).toBe(true);
+      expect(openaiVideosRetrieveSchema.safeParse({ video_id: "" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosDeleteSchema (openai-videos-delete)", () => {
+    it("requires non-empty video_id", () => {
+      expect(openaiVideosDeleteSchema.safeParse({ video_id: "vid_123" }).success).toBe(true);
+      expect(openaiVideosDeleteSchema.safeParse({ video_id: "" }).success).toBe(false);
+    });
+  });
+
+  describe("openaiVideosDownloadContentSchema (openai-videos-download-content)", () => {
+    it("applies default variant and validates input", () => {
+      const result = openaiVideosDownloadContentSchema.safeParse({ video_id: "vid_123" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.variant).toBe("video");
+      }
+    });
+
+    it("rejects invalid variant", () => {
+      expect(openaiVideosDownloadContentSchema.safeParse({ video_id: "vid_123", variant: "bad" }).success).toBe(false);
+    });
+
+    it("rejects relative file path", () => {
+      expect(openaiVideosDownloadContentSchema.safeParse({ video_id: "vid_123", file: "./out" }).success).toBe(false);
     });
   });
 

@@ -29,12 +29,27 @@ import {
   mapFileToPublicUrl,
 } from "./lib/env.js";
 import { log } from "./lib/logger.js";
-import { testToolSchema, type TestToolArgs } from "./lib/schemas.js";
+import {
+  testToolSchema,
+  openaiVideosCreateSchema,
+  openaiVideosRemixSchema,
+  openaiVideosListSchema,
+  openaiVideosRetrieveSchema,
+  openaiVideosDeleteSchema,
+  openaiVideosDownloadContentSchema,
+  type TestToolArgs,
+  type OpenAIVideosCreateArgs,
+  type OpenAIVideosRemixArgs,
+  type OpenAIVideosListArgs,
+  type OpenAIVideosRetrieveArgs,
+  type OpenAIVideosDeleteArgs,
+  type OpenAIVideosDownloadContentArgs,
+} from "./lib/schemas.js";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { TextContent, ImageContent, ResourceLink, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { OpenAI, AzureOpenAI, toFile } from "openai";
+import { OpenAI, AzureOpenAI, toFile, type Uploadable } from "openai";
 
 // Optional sharp import for image compression
 // Falls back to no-op if sharp is not available (e.g., in environments without native modules)
@@ -361,6 +376,133 @@ function buildPublicUrlForFile(filePath: string): string | undefined {
   return mapFileToPublicUrl(filePath, normalizedBaseDirs, publicUrlPrefixes);
 }
 
+// Helper: get a standard OpenAI client for Videos endpoints.
+// AzureOpenAI compatibility for /videos is not assumed.
+function getOpenAIVideosClient(toolName: string): OpenAI {
+  const client = getOpenAIClient();
+  if (client instanceof AzureOpenAI) {
+    throw new Error(`${toolName} is not supported with AzureOpenAI (AZURE_OPENAI_API_KEY is set).`);
+  }
+  return client;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type VideoDownloadVariant = "video" | "thumbnail" | "spritesheet";
+
+function normalizeContentType(contentType: string | null): string | undefined {
+  const raw = contentType?.split(";")[0]?.trim().toLowerCase();
+  return raw && raw.length > 0 ? raw : undefined;
+}
+
+function inferVideoExtension(contentType: string | null, variant: VideoDownloadVariant): string {
+  const ct = normalizeContentType(contentType);
+  if (ct === "video/mp4" || ct === "application/mp4") return ".mp4";
+  if (ct === "image/png") return ".png";
+  if (ct === "image/jpeg") return ".jpg";
+  if (ct === "image/webp") return ".webp";
+  if (ct === "application/zip") return ".zip";
+
+  if (variant === "video") return ".mp4";
+  if (variant === "thumbnail") return ".png";
+  return ".zip";
+}
+
+function inferMimeType(contentType: string | null, ext: string): string {
+  const ct = normalizeContentType(contentType);
+  if (ct) return ct;
+
+  const normalizedExt = ext.toLowerCase();
+  if (normalizedExt === ".mp4") return "video/mp4";
+  if (normalizedExt === ".png") return "image/png";
+  if (normalizedExt === ".jpg" || normalizedExt === ".jpeg") return "image/jpeg";
+  if (normalizedExt === ".webp") return "image/webp";
+  if (normalizedExt === ".zip") return "application/zip";
+  return "application/octet-stream";
+}
+
+function resolveVideoBaseOutputPath(file: string | undefined, toolPrefix: string): string {
+  if (file) return resolvePathInPrimaryRoot(file);
+  const unique = crypto.randomUUID();
+  const timestamp = Date.now();
+  return path.join(primaryOutputDir, `${toolPrefix}_${timestamp}_${unique}`);
+}
+
+function buildVariantOutputPath(
+  basePath: string,
+  variant: VideoDownloadVariant,
+  ext: string,
+  multipleVariants: boolean,
+): string {
+  const parsed = path.parse(basePath);
+  const baseName = parsed.name || parsed.base;
+  if (multipleVariants) {
+    return path.join(parsed.dir, `${baseName}_${variant}${ext}`);
+  }
+  return path.join(parsed.dir, `${baseName}${ext}`);
+}
+
+async function downloadVideoAssetToFile(
+  openai: OpenAI,
+  videoId: string,
+  variant: VideoDownloadVariant,
+  basePath: string,
+  multipleVariants: boolean,
+): Promise<{ resourceLink: ResourceLink; filePath: string; uri: string; mimeType: string }> {
+  const response = await openai.videos.downloadContent(videoId, { variant });
+  const contentType = response.headers.get("content-type");
+  const ext = inferVideoExtension(contentType, variant);
+  const mimeType = inferMimeType(contentType, ext);
+
+  const filePath = buildVariantOutputPath(basePath, variant, ext, multipleVariants);
+  if (!isPathInAllowedDirs(filePath)) {
+    throw new Error(`Output path is outside allowed MEDIA_GEN_DIRS roots: ${filePath}`);
+  }
+
+  await ensureDirectoryWritable(filePath);
+
+  const buf = Buffer.from(await response.arrayBuffer());
+  await fs.promises.writeFile(filePath, buf);
+
+  const httpUrl = buildPublicUrlForFile(filePath);
+  const uri = httpUrl ?? `file://${filePath}`;
+  const resourceLink: ResourceLink = {
+    type: "resource_link",
+    uri,
+    name: path.basename(filePath),
+    mimeType,
+  };
+
+  return { resourceLink, filePath, uri, mimeType };
+}
+
+async function waitForVideoCompletion(
+  openai: OpenAI,
+  videoId: string,
+  opts: { timeoutMs?: number | undefined; pollIntervalMs?: number | undefined; toolName: string },
+): Promise<Awaited<ReturnType<OpenAI["videos"]["retrieve"]>>> {
+  const timeoutMs = opts.timeoutMs ?? 300000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 2000;
+  const start = Date.now();
+
+  while (Date.now() - start <= timeoutMs) {
+    const video = await openai.videos.retrieve(videoId);
+    if (video.status === "completed") return video;
+    if (video.status === "failed") {
+      const message = video.error?.message ?? "Video generation failed";
+      throw new Error(message);
+    }
+    await sleep(pollIntervalMs);
+  }
+
+  const last = await openai.videos.retrieve(videoId);
+  throw new Error(
+    `${opts.toolName} timeout after ${timeoutMs}ms (status=${last.status}, progress=${last.progress})`,
+  );
+}
+
 // Helper: write images to disk and build resource links + URLs
 async function writeImagesAndBuildLinks(
   images: ImageData[],
@@ -588,14 +730,14 @@ function buildImageToolResult(
 }
 
 (async () => {
-  const server = new McpServer({
-    name: "media-gen-mcp",
-    version: "1.0.0"
-  }, {
-    capabilities: {
-      tools: { listChanged: false }
-    }
-  });
+const server = new McpServer({
+  name: "media-gen-mcp",
+  version: "0.1.0"
+}, {
+  capabilities: {
+    tools: { listChanged: false }
+  }
+});
 
   // Zod schema for openai-images-generate tool input
   const openaiImagesGenerateBaseSchema = z.object({
@@ -922,6 +1064,342 @@ function buildImageToolResult(
         return buildErrorResult(err, "openai-images-edit");
       }
     }
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OpenAI Videos tools
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  server.registerTool(
+    "openai-videos-create",
+    {
+      title: "OpenAI Videos Create",
+      description:
+        "Create a video generation job using the OpenAI Videos API. Returns structuredContent with the OpenAI Video job object, and (optionally) resource_link items for downloaded assets.",
+      inputSchema: openaiVideosCreateSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: OpenAIVideosCreateArgs, _extra: unknown) => {
+      try {
+        const validated = openaiVideosCreateSchema.parse(args);
+        const {
+          prompt,
+          input_reference,
+          model,
+          seconds,
+          size,
+          wait_for_completion,
+          timeout_ms,
+          poll_interval_ms,
+          download_variants,
+          file,
+        } = validated;
+
+        const openai = getOpenAIVideosClient("openai-videos-create");
+
+        const content: ContentBlock[] = [];
+
+        let inputReferenceUploadable: Uploadable | undefined;
+        if (input_reference) {
+          let resolvedInput = input_reference;
+          if (isHttpUrl(resolvedInput)) {
+            if (!isUrlAllowedByEnv(resolvedInput)) {
+              throw new Error("input_reference URL is not allowed by MEDIA_GEN_URLS");
+            }
+            log.child("openai-videos-create").debug("fetching input_reference from URL", { url: resolvedInput });
+            resolvedInput = await fetchImageAsBase64(resolvedInput);
+          }
+
+          // Helper to convert input (path or base64) to Uploadable
+          async function inputToUploadable(input: string): Promise<Uploadable> {
+            if (!isBase64Image(input)) {
+              const resolved = resolvePathInPrimaryRoot(input);
+              if (!isPathInAllowedDirs(resolved)) {
+                throw new Error("input_reference path is outside allowed MEDIA_GEN_DIRS roots");
+              }
+              const ext = resolved.split(".").pop()?.toLowerCase();
+              let mime = "image/png";
+              if (ext === "jpg" || ext === "jpeg") mime = "image/jpeg";
+              else if (ext === "webp") mime = "image/webp";
+              else if (ext === "png") mime = "image/png";
+              return await toFile(fs.createReadStream(resolved), undefined, { type: mime });
+            }
+
+            let base64 = input;
+            let mime = "image/png";
+            if (input.startsWith("data:image/")) {
+              const match = input.match(/^data:(image\/\\w+);base64,(.*)$/);
+              if (match && match.length >= 3) {
+                const mimeGroup = match[1];
+                const base64Group = match[2];
+                if (mimeGroup && base64Group) {
+                  mime = mimeGroup;
+                  base64 = base64Group;
+                }
+              }
+            }
+            const buffer = Buffer.from(base64, "base64");
+            const [, subtype = "png"] = mime.split("/");
+            return await toFile(buffer, `input_reference.${subtype}`, { type: mime });
+          }
+
+          inputReferenceUploadable = await inputToUploadable(resolvedInput);
+        }
+
+        const createParams: Parameters<typeof openai.videos.create>[0] = {
+          prompt,
+          ...(inputReferenceUploadable ? { input_reference: inputReferenceUploadable } : {}),
+          ...(model ? { model } : {}),
+          ...(seconds ? { seconds } : {}),
+          ...(size ? { size } : {}),
+        };
+
+        const created = await openai.videos.create(createParams);
+
+        content.push({
+          type: "text" as const,
+          text: `video_id=${created.id} status=${created.status} progress=${created.progress}`,
+        });
+
+        if (!wait_for_completion) {
+          content.push({ type: "text" as const, text: JSON.stringify(created, null, 2) });
+          return {
+            content,
+            structuredContent: created as unknown as Record<string, unknown>,
+          };
+        }
+
+        const finalVideo = await waitForVideoCompletion(openai, created.id, {
+          timeoutMs: timeout_ms,
+          pollIntervalMs: poll_interval_ms,
+          toolName: "openai-videos-create",
+        });
+
+        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
+        const multipleVariants = variants.length > 1;
+        const basePath = resolveVideoBaseOutputPath(file, "openai_video");
+        await validateOutputDirectory(basePath);
+
+        const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
+        for (const variant of variants) {
+          const downloaded = await downloadVideoAssetToFile(openai, finalVideo.id, variant, basePath, multipleVariants);
+          content.push(downloaded.resourceLink);
+          assets.push({
+            variant,
+            uri: downloaded.uri,
+            mimeType: downloaded.mimeType,
+            file: `file://${downloaded.filePath}`,
+          });
+        }
+
+        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets }, null, 2) });
+        content.push({ type: "text" as const, text: JSON.stringify(finalVideo, null, 2) });
+
+        return {
+          content,
+          structuredContent: finalVideo as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-create");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-remix",
+    {
+      title: "OpenAI Videos Remix",
+      description:
+        "Create a remix video job from an existing video_id. Returns structuredContent with the OpenAI Video job object, and (optionally) resource_link items for downloaded assets.",
+      inputSchema: openaiVideosRemixSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: OpenAIVideosRemixArgs) => {
+      try {
+        const validated = openaiVideosRemixSchema.parse(args);
+        const {
+          video_id,
+          prompt,
+          wait_for_completion,
+          timeout_ms,
+          poll_interval_ms,
+          download_variants,
+          file,
+        } = validated;
+
+        const openai = getOpenAIVideosClient("openai-videos-remix");
+
+        const content: ContentBlock[] = [];
+        const remixed = await openai.videos.remix(video_id, { prompt });
+
+        content.push({
+          type: "text" as const,
+          text: `video_id=${remixed.id} status=${remixed.status} progress=${remixed.progress} remixed_from=${remixed.remixed_from_video_id ?? video_id}`,
+        });
+
+        if (!wait_for_completion) {
+          content.push({ type: "text" as const, text: JSON.stringify(remixed, null, 2) });
+          return {
+            content,
+            structuredContent: remixed as unknown as Record<string, unknown>,
+          };
+        }
+
+        const finalVideo = await waitForVideoCompletion(openai, remixed.id, {
+          timeoutMs: timeout_ms,
+          pollIntervalMs: poll_interval_ms,
+          toolName: "openai-videos-remix",
+        });
+
+        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
+        const multipleVariants = variants.length > 1;
+        const basePath = resolveVideoBaseOutputPath(file, "openai_video_remix");
+        await validateOutputDirectory(basePath);
+
+        const assets: Array<{ variant: VideoDownloadVariant; uri: string; mimeType: string; file: string }> = [];
+        for (const variant of variants) {
+          const downloaded = await downloadVideoAssetToFile(openai, finalVideo.id, variant, basePath, multipleVariants);
+          content.push(downloaded.resourceLink);
+          assets.push({
+            variant,
+            uri: downloaded.uri,
+            mimeType: downloaded.mimeType,
+            file: `file://${downloaded.filePath}`,
+          });
+        }
+
+        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets }, null, 2) });
+        content.push({ type: "text" as const, text: JSON.stringify(finalVideo, null, 2) });
+
+        return {
+          content,
+          structuredContent: finalVideo as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-remix");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-list",
+    {
+      title: "OpenAI Videos List",
+      description:
+        "List video jobs using the OpenAI Videos API. Returns structuredContent with the OpenAI list response shape { data, has_more, last_id }.",
+      inputSchema: openaiVideosListSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: OpenAIVideosListArgs) => {
+      try {
+        const validated = openaiVideosListSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-list");
+
+        const page = await openai.videos.list({
+          ...(validated.after ? { after: validated.after } : {}),
+          ...(validated.limit ? { limit: validated.limit } : {}),
+          ...(validated.order ? { order: validated.order } : {}),
+        });
+
+        const structured = {
+          data: page.data,
+          has_more: page.has_more,
+          last_id: page.last_id,
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-list");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-retrieve",
+    {
+      title: "OpenAI Videos Retrieve",
+      description: "Retrieve a video job by id using the OpenAI Videos API.",
+      inputSchema: openaiVideosRetrieveSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: OpenAIVideosRetrieveArgs) => {
+      try {
+        const validated = openaiVideosRetrieveSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-retrieve");
+        const video = await openai.videos.retrieve(validated.video_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(video, null, 2) }],
+          structuredContent: video as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-retrieve");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-delete",
+    {
+      title: "OpenAI Videos Delete",
+      description: "Delete a video job by id using the OpenAI Videos API.",
+      inputSchema: openaiVideosDeleteSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: OpenAIVideosDeleteArgs) => {
+      try {
+        const validated = openaiVideosDeleteSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-delete");
+        const deleted = await openai.videos.delete(validated.video_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(deleted, null, 2) }],
+          structuredContent: deleted as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-delete");
+      }
+    },
+  );
+
+  server.registerTool(
+    "openai-videos-download-content",
+    {
+      title: "OpenAI Videos Download Content",
+      description:
+        "Download a video asset (video/thumbnail/spritesheet) for a completed job, write it under MEDIA_GEN_DIRS, and return resource_link(s).",
+      inputSchema: openaiVideosDownloadContentSchema.shape,
+      annotations: imageToolAnnotations,
+    },
+    async (args: OpenAIVideosDownloadContentArgs) => {
+      try {
+        const validated = openaiVideosDownloadContentSchema.parse(args);
+        const openai = getOpenAIVideosClient("openai-videos-download-content");
+
+        const video = await openai.videos.retrieve(validated.video_id);
+        if (video.status !== "completed") {
+          throw new Error(`Cannot download content: video status is ${video.status} (progress=${video.progress})`);
+        }
+
+        const variant = (validated.variant ?? "video") as VideoDownloadVariant;
+        const basePath = resolveVideoBaseOutputPath(validated.file, "openai_video_download");
+        await validateOutputDirectory(basePath);
+
+        const downloaded = await downloadVideoAssetToFile(openai, video.id, variant, basePath, false);
+
+        return {
+          content: [
+            downloaded.resourceLink,
+            { type: "text", text: JSON.stringify({ video_id: video.id, variant, uri: downloaded.uri }, null, 2) },
+            { type: "text", text: JSON.stringify(video, null, 2) },
+          ],
+          structuredContent: video as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "openai-videos-download-content");
+      }
+    },
   );
 
   // ═══════════════════════════════════════════════════════════════════════════

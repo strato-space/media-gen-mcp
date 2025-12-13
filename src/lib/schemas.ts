@@ -30,6 +30,91 @@ export type ToolResultType = z.infer<typeof toolResultEnum>;
 const responseFormatEnum = z.enum(["url", "b64_json"]);
 export type ResponseFormatType = z.infer<typeof responseFormatEnum>;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenAI Videos schemas
+// ─────────────────────────────────────────────────────────────────────────────
+
+const videoModelEnum = z.enum(["sora-2", "sora-2-pro"]);
+export type VideoModelType = z.infer<typeof videoModelEnum>;
+
+const videoSecondsEnum = z.enum(["4", "8", "12"]);
+export type VideoSecondsType = z.infer<typeof videoSecondsEnum>;
+
+const videoSizeEnum = z.enum(["720x1280", "1280x720", "1024x1792", "1792x1024"]);
+export type VideoSizeType = z.infer<typeof videoSizeEnum>;
+
+const videoVariantEnum = z.enum(["video", "thumbnail", "spritesheet"]);
+export type VideoVariantType = z.infer<typeof videoVariantEnum>;
+
+const nonEmptyString = z.string().refine((val) => val.trim().length > 0, { message: "Must be a non-empty string" });
+
+export const openaiVideosCreateSchema = z.object({
+  prompt: z.string().max(32000).describe("Text prompt that describes the video to generate (max 32K chars)."),
+  input_reference: nonEmptyString.optional()
+    .describe("Optional image reference: HTTP(S) URL, base64 / data URL, or file path."),
+  model: videoModelEnum.default("sora-2").optional()
+    .describe("Video model to use (default: sora-2)."),
+  seconds: videoSecondsEnum.optional()
+    .describe("Clip duration in seconds (default: 4 seconds)."),
+  size: videoSizeEnum.optional()
+    .describe("Output resolution formatted as width x height (default: 720x1280)."),
+
+  wait_for_completion: z.boolean().default(false).optional()
+    .describe("If true, poll the job until completed/failed (then optionally download assets)."),
+  timeout_ms: z.number().int().min(1000).max(3600000).default(300000).optional()
+    .describe("Max time to wait for completion when wait_for_completion is true (default: 300000)."),
+  poll_interval_ms: z.number().int().min(250).max(60000).default(2000).optional()
+    .describe("Polling interval when wait_for_completion is true (default: 2000)."),
+
+  download_variants: z.array(videoVariantEnum).min(1).default(["video"]).optional()
+    .describe("Which downloadable assets to fetch when completed (default: ['video'])."),
+  file: z.string().optional()
+    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
+    .describe("Base path for output files (absolute). Suffixes are added when multiple variants are requested."),
+});
+
+export const openaiVideosRemixSchema = z.object({
+  video_id: nonEmptyString.describe("Source video job id to remix."),
+  prompt: z.string().max(32000).describe("Updated prompt that directs the remix (max 32K chars)."),
+
+  wait_for_completion: z.boolean().default(false).optional()
+    .describe("If true, poll the job until completed/failed (then optionally download assets)."),
+  timeout_ms: z.number().int().min(1000).max(3600000).default(300000).optional()
+    .describe("Max time to wait for completion when wait_for_completion is true (default: 300000)."),
+  poll_interval_ms: z.number().int().min(250).max(60000).default(2000).optional()
+    .describe("Polling interval when wait_for_completion is true (default: 2000)."),
+
+  download_variants: z.array(videoVariantEnum).min(1).default(["video"]).optional()
+    .describe("Which downloadable assets to fetch when completed (default: ['video'])."),
+  file: z.string().optional()
+    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
+    .describe("Base path for output files (absolute). Suffixes are added when multiple variants are requested."),
+});
+
+export const openaiVideosListSchema = z.object({
+  after: nonEmptyString.optional().describe("Cursor (video id) to list after."),
+  limit: z.number().int().min(1).max(100).optional().describe("Page size."),
+  order: z.enum(["asc", "desc"]).optional()
+    .describe("Sort order of results by timestamp."),
+});
+
+export const openaiVideosRetrieveSchema = z.object({
+  video_id: nonEmptyString.describe("Video job id."),
+});
+
+export const openaiVideosDeleteSchema = z.object({
+  video_id: nonEmptyString.describe("Video job id to delete."),
+});
+
+export const openaiVideosDownloadContentSchema = z.object({
+  video_id: nonEmptyString.describe("Video job id."),
+  variant: videoVariantEnum.default("video").optional()
+    .describe("Which downloadable asset to return (default: video)."),
+  file: z.string().optional()
+    .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
+    .describe("Output file path base (absolute). Extension is chosen based on content-type."),
+});
+
 // openai-images-generate base schema (without output/file for reuse)
 export const openaiImagesGenerateBaseSchema = z.object({
   prompt: z.string().max(32000).describe("Text prompt describing the desired image (max 32K chars)."),
@@ -158,3 +243,10 @@ export type OpenAIImagesEditArgs = z.input<typeof openaiImagesEditSchema>;
 export type FetchImagesArgs = z.input<typeof fetchImagesSchema>;
 export type FetchImagesClientArgs = z.input<typeof fetchImagesClientSchema>;
 export type TestToolArgs = z.input<typeof testToolSchema>;
+
+export type OpenAIVideosCreateArgs = z.input<typeof openaiVideosCreateSchema>;
+export type OpenAIVideosRemixArgs = z.input<typeof openaiVideosRemixSchema>;
+export type OpenAIVideosListArgs = z.input<typeof openaiVideosListSchema>;
+export type OpenAIVideosRetrieveArgs = z.input<typeof openaiVideosRetrieveSchema>;
+export type OpenAIVideosDeleteArgs = z.input<typeof openaiVideosDeleteSchema>;
+export type OpenAIVideosDownloadContentArgs = z.input<typeof openaiVideosDownloadContentSchema>;

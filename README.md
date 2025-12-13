@@ -13,12 +13,13 @@
 
 ---
 
-A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image generation and editing API, with ongoing work towards DALL·E support.
+A Model Context Protocol (MCP) tool server for OpenAI's gpt-image-1 image generation/editing API plus OpenAI Videos (Sora) job tooling, with ongoing work towards DALL·E support.
 
 **Design principle:** spec-first, type-safe image tooling – strict OpenAI Images API + MCP compliance with fully static TypeScript types and flexible result placements/response formats for different clients.
 
 - **Generate images** from text prompts using OpenAI's `gpt-image-1` model (with DALL·E support planned in future versions).
 - **Edit images** (inpainting, outpainting, compositing) from 1 up to 16 images at once, with advanced prompt control.
+- **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
 - **Fetch & compress images** from HTTP(S) URLs or local file paths with smart size/quality optimization.
 - **Debug MCP output shapes** with a test tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
 - **Integrates with**: [fast-agent](https://github.com/strato-space/fast-agent), [Windsurf](https://windsurf.com), [Claude Desktop](https://www.anthropic.com/claude/desktop), [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com/), and any MCP-compatible client.
@@ -206,6 +207,28 @@ Environment variables:
 - The server will **optionally** load a local `.env` file from its working directory if present (it does not override already-set environment variables).
 - You can also pass `--env-file /path/to/env` when starting the server (including via `npx`); this file is loaded via `dotenv` before tools run, again without overriding already-set variables.
 
+### Logging and base64 truncation
+
+To avoid flooding logs with huge image payloads, the built-in logger applies a
+log-only sanitizer to structured `data` passed to `log.debug/info/warn/error`:
+
+- Truncates configured string fields (e.g. `b64_json`, `base64`, string
+  `data`, `image_url`) to a short preview controlled by
+  `LOG_TRUNCATE_DATA_MAX` (default: 64 characters). The list of keys defaults
+  to `LOG_SANITIZE_KEYS` inside `src/lib/logger.ts` and can be overridden via
+  `MEDIA_GEN_MCP_LOG_SANITIZE_KEYS` (comma-separated list of field names).
+- Sanitization is applied **only** to log serialization; tool results returned
+  to MCP clients are never modified.
+
+Control via environment:
+
+- `MEDIA_GEN_MCP_LOG_SANITIZE_IMAGES` (default: `true`)
+  - `1`, `true`, `yes`, `on` – enable truncation (default behaviour).
+  - `0`, `false`, `no`, `off` – disable truncation and log full payloads.
+
+Field list and limits are configured in `src/lib/logger.ts` via
+`LOG_SANITIZE_KEYS` and `LOG_TRUNCATE_DATA_MAX`.
+
 ### Security and local file access
 
 - **Allowed directories**: All tools are restricted to paths matching `MEDIA_GEN_DIRS`. If unset, defaults to `/tmp/media-gen-mcp` (or `%TEMP%/media-gen-mcp` on Windows).
@@ -346,6 +369,10 @@ Arguments (input schema):
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
 - `file` (string, optional)
   - Path to save the image file, **absolute or relative** to the first `MEDIA_GEN_DIRS` entry (or the default root).
   - When `n > 1`, an index suffix like `_1`, `_2` is appended to the filename.
@@ -417,6 +444,10 @@ Arguments (input schema):
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
 - `file` (string, optional)
   - Path where edited images will be written, **absolute or relative** to the first `MEDIA_GEN_DIRS` entry.
   - If multiple images are produced, an index suffix is appended before the
@@ -450,6 +481,78 @@ Error handling (both tools):
   - `content: [{ type: "text", text: <error message string> }]`
 - The error message text is taken directly from the underlying exception message, without additional commentary from the server, while full details are logged to the server console.
 
+### openai-videos-create
+
+Create a video generation job using the OpenAI Videos API (`videos.create`).
+
+Arguments (input schema):
+
+- `prompt` (string, required) — text prompt describing the video (max 32K chars).
+- `input_reference` (string, optional) — optional image reference (HTTP(S) URL, base64/data URL, or file path).
+- `model` ("sora-2" | "sora-2-pro", default: "sora-2")
+- `seconds` ("4" | "8" | "12", optional)
+- `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
+- `wait_for_completion` (boolean, default: false)
+  - When true, the server polls `openai-videos-retrieve` until `completed` or `failed` (or timeout), then downloads assets.
+- `timeout_ms` (integer, default: 300000)
+- `poll_interval_ms` (integer, default: 2000)
+- `download_variants` (string[], default: ["video"])
+  - Allowed values: `"video" | "thumbnail" | "spritesheet"`.
+- `file` (string, optional)
+  - Base output path **(absolute)**. When multiple variants are requested, suffixes are added (e.g. `_video.mp4`).
+
+Output (MCP CallToolResult):
+
+- `structuredContent`: OpenAI `Video` object (job metadata; final state when `wait_for_completion=true`).
+- `content`: includes `resource_link` items for downloaded assets (when requested) and text blocks with JSON.
+
+### openai-videos-remix
+
+Create a remix job from an existing `video_id` (`videos.remix`).
+
+Arguments (input schema):
+
+- `video_id` (string, required)
+- `prompt` (string, required)
+- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants`, `file` — same semantics as `openai-videos-create`.
+
+### openai-videos-list
+
+List video jobs (`videos.list`).
+
+Arguments (input schema):
+
+- `after` (string, optional) — cursor (video id) to list after.
+- `limit` (integer, optional)
+- `order` ("asc" | "desc", optional)
+
+Output:
+
+- `structuredContent`: OpenAI list response shape `{ data, has_more, last_id }`.
+- `content`: a text block with serialized JSON.
+
+### openai-videos-retrieve
+
+Retrieve job status (`videos.retrieve`).
+
+- `video_id` (string, required)
+
+### openai-videos-delete
+
+Delete a video job (`videos.delete`).
+
+- `video_id` (string, required)
+
+### openai-videos-download-content
+
+Download an asset for a completed job (`videos.downloadContent`, REST `videos.download_content`), write it under allowed `MEDIA_GEN_DIRS`, and return an MCP `resource_link`.
+
+Arguments (input schema):
+
+- `video_id` (string, required)
+- `variant` ("video" | "thumbnail" | "spritesheet", default: "video")
+- `file` (string, optional) — base output path **(absolute)**.
+
 ### fetch-images
 
 Fetch and process images from URLs or local file paths with optional compression.
@@ -471,6 +574,10 @@ Arguments (input schema):
 -  - `format` ("jpeg" | "png" | "webp", optional): Output format. Default: jpeg.
 - `response_format` ("url" | "b64_json", default: "url")
   - Response format: file/URL-based (`url`) or inline base64 (`b64_json`).
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
 - `file` (string, optional)
   - Base path for output files. If multiple images, index suffix is added.
 
@@ -496,6 +603,10 @@ Arguments (input schema):
   - Override `MEDIA_GEN_MCP_RESULT_PLACEMENT` for this call.
 - `compression` (object, optional)
   - Same logical tuning knobs as `fetch-images`, but using camelCase keys:
+- `tool_result` ("resource_link" | "image", default: "resource_link")
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"image"` emits base64 ImageContent blocks
     - `maxSize` (integer, optional): max dimension in pixels.
     - `maxBytes` (integer, optional): target max file size in bytes.
     - `quality` (integer, optional): JPEG/WebP quality 1–100.
@@ -780,6 +891,9 @@ Both `openai-images-generate` and `openai-images-edit` now attach `files` + `url
   - [Images generate (gpt-image-1)](https://platform.openai.com/docs/api-reference/images/create)
   - [Images edit (`createEdit`)](https://platform.openai.com/docs/api-reference/images/createEdit)
   - [Tools guide: image generation & revised_prompt](https://platform.openai.com/docs/guides/tools-image-generation)
+
+- **OpenAI Videos**
+  - [Videos API overview](https://platform.openai.com/docs/api-reference/videos)
 
 - **Case studies**
   - [MCP image rendering in ChatGPT (GitHub issue)](https://github.com/strato-space/report/issues/1)
