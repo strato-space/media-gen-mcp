@@ -2,7 +2,13 @@
 
 ## Project Overview
 
-**media-gen-mcp** is a Model Context Protocol (MCP) server providing image generation and processing tools via OpenAI's gpt-image-1 API. The server is designed for production use with strict TypeScript compilation, comprehensive error handling, and flexible output formatting for different MCP clients.
+**media-gen-mcp** is a Model Context Protocol (MCP) server providing:
+
+- OpenAI Images tools (`gpt-image-1`) for image generation and edits/inpainting.
+- OpenAI Videos (Sora) job tooling (`sora-2`, `sora-2-pro`) for video generation and asset downloads.
+- Local/URL image fetching plus optional compression and video input preprocessing via `sharp`.
+
+The server is designed for production use with strict TypeScript compilation, comprehensive error handling, and flexible output formatting for different MCP clients.
 
 ## Architecture
 
@@ -10,13 +16,18 @@
 src/
 ├── index.ts              # MCP server entry point + tool registrations
 └── lib/
-    ├── compression.ts    # Image compression (sharp-based)
-    ├── helpers.ts        # URL/path validation, result building
-    └── schemas.ts        # Zod schemas for all tools
+    ├── compression.ts    # Image compression + format detection (sharp-based)
+    ├── env.ts            # Env parsing + dir/url allowlists (+ glob support)
+    ├── helpers.ts        # URL/path validation, output resolution, result building
+    ├── logger.ts         # Structured logger + truncation helpers
+    └── schemas.ts        # Zod schemas for all tools (exported for tests)
 test/
-├── compression.test.ts   # Compression module tests
-├── helpers.test.ts       # Helper function tests
-└── schemas.test.ts       # Schema validation tests
+├── compression.test.ts
+├── env.test.ts
+├── fetch-images.integration.test.ts
+├── helpers.test.ts
+├── logger.test.ts
+└── schemas.test.ts
 ```
 
 ## Tools
@@ -24,17 +35,29 @@ test/
 | Tool | Purpose | OpenAI API |
 |------|---------|------------|
 | `openai-images-generate` | Generate images from text prompts | `images.generate` |
-| `openai-images-edit` | Edit/inpaint images (1-16 inputs) | `images.edit` |
+| `openai-images-edit` | Edit/inpaint/outpaint images (1–16 inputs) | `images.edit` |
+| `openai-videos-create` | Create a video job | `videos.create` |
+| `openai-videos-remix` | Remix an existing video job | `videos.remix` |
+| `openai-videos-list` | List video jobs | `videos.list` |
+| `openai-videos-retrieve` | Retrieve a video job | `videos.retrieve` |
+| `openai-videos-delete` | Delete a video job | `videos.delete` |
+| `openai-videos-download-content` | Download job assets (video/thumbnail/spritesheet) | `videos.downloadContent` |
 | `fetch-images` | Fetch & compress images from URLs/files | None |
 | `test-tool` | Debug MCP result format | None |
 
 ## Key Design Decisions
 
-### 1. Single-File Architecture
-All server logic in `src/index.ts` for simplicity and ease of review. No complex module structure — the entire MCP server is ~950 lines.
+### 1. Mostly single-file server
+Most server logic lives in `src/index.ts` for simplicity and ease of review. `src/lib/*` contains small, focused helpers and shared schemas.
 
-### 2. Tool Result Format
-All image tools support two parameters that control the MCP tool result shape:
+### 2. Tool result format (MCP-first)
+Tools return MCP `CallToolResult` with:
+
+- `content[]` blocks (`text`, `image`, `resource_link`)
+- optional `structuredContent` for machine-readable OpenAI responses
+- `isError: true` with a single `text` block for failures
+
+For image/video tools, two parameters standardize output shapes:
 
 - **`tool_result`** (`resource_link` | `image`, default: `resource_link`): Controls `content[]` shape
   - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
@@ -47,10 +70,15 @@ All image tools support two parameters that control the MCP tool result shape:
 
 Per MCP spec 5.2.6, a `TextContent` block with serialized JSON (URLs in `data[]`) is also included for backward compatibility.
 
-### 3. Optional Sharp Dependency
-The `sharp` library is an optional dependency for image compression. If unavailable, compression features gracefully degrade. This allows deployment in environments where native modules are problematic.
+### 3. Directory + URL safety model
+- Local reads/writes are restricted to `MEDIA_GEN_DIRS` (supports glob patterns).
+- Remote downloads are restricted by `MEDIA_GEN_URLS` when set.
+- Public URLs for `resource_link` are derived from `MEDIA_GEN_MCP_URL_PREFIXES` matched positionally to `MEDIA_GEN_DIRS`.
 
-### 4. Strict TypeScript
+### 4. Optional sharp dependency
+The `sharp` library is an optional dependency for image compression and video `input_reference` preprocessing. If unavailable, compression features gracefully degrade and video `input_reference` auto-fit requires `input_reference_fit=match` (caller must provide correctly sized images).
+
+### 5. Strict TypeScript
 All strict checks are enabled in `tsconfig.json` and used by `npm run build` / `npm run typecheck`:
 - `strict: true`
 - `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes`, `strictBindCallApply`, `strictPropertyInitialization`, `noImplicitThis`, `useUnknownInCatchVariables`, `alwaysStrict`
@@ -61,14 +89,17 @@ All strict checks are enabled in `tsconfig.json` and used by `npm run build` / `
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes* | OpenAI API key |
-| `AZURE_OPENAI_API_KEY` | No | Azure OpenAI key (alternative) |
-| `AZURE_OPENAI_ENDPOINT` | No | Azure endpoint URL |
-| `MEDIA_GEN_MCP_OUTPUT_DIR` | No | Output directory for generated files (default: `/tmp`). May coincide with your public static dir. |
-| `MEDIA_GEN_MCP_URL_PREFIXES` | No | Optional comma-separated HTTPS prefixes for public URLs, matched positionally to `MEDIA_GEN_DIRS` entries. |
-| `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` | No | Enable test-tool: sample images dir |
+| `OPENAI_API_KEY` | Yes* | OpenAI API key (Images + Videos). |
+| `AZURE_OPENAI_API_KEY` | No | Azure OpenAI key (enables AzureOpenAI client; videos tools are not supported when set). |
+| `AZURE_OPENAI_ENDPOINT` | No | Azure endpoint URL (required when using Azure). |
+| `MEDIA_GEN_DIRS` | No | Comma-separated allowed base directories (default: `/tmp/media-gen-mcp` or `%TEMP%/media-gen-mcp`). First entry is the primary output dir. Supports glob patterns. |
+| `MEDIA_GEN_URLS` | No | Comma-separated allowed URL prefixes (or globs) for HTTP(S) inputs (when set, other URLs are rejected). |
+| `MEDIA_GEN_MCP_URL_PREFIXES` | No | Comma-separated public HTTPS prefixes matched positionally to `MEDIA_GEN_DIRS` for building public `resource_link` URLs. |
+| `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` | No | Enables `test-tool` and adds extra allowed read-only dirs (supports glob patterns). |
+| `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES` | No | If `true`, allows `fetch-images` to use `n` to return the last N files from `MEDIA_GEN_DIRS[0]`. |
+| `MEDIA_GEN_MCP_DEBUG` | No | If `true`, enables verbose startup/config logging. |
 
-*Required for `openai-images-generate` and `openai-images-edit` tools.
+*Required for OpenAI tools.
 
 ## Build & Test
 
@@ -122,9 +153,9 @@ TypeScript compilation and ESLint with type-aware rules require significant memo
 - Partial success supported (e.g., `fetch-images` with some failures)
 
 ### Security
-- Path validation: only absolute paths accepted
+- Path validation: absolute or relative paths are resolved against `MEDIA_GEN_DIRS[0]` and must match allowed `MEDIA_GEN_DIRS` roots (glob patterns supported)
 - Test tool requires explicit directory configuration
-- No path traversal — exact matches only
+- No path traversal — resolved paths are checked against the allowlist roots/patterns
 - API keys loaded from environment, never hardcoded
 
 ## Testing Strategy
@@ -135,15 +166,19 @@ npm run test         # Run vitest once
 npm run test:watch   # Watch mode
 ```
 
-**86 tests** across 3 modules:
+**138 tests** across 6 files:
 - `compression.test.ts` (12) — image format detection, buffer processing, file I/O
-- `helpers.test.ts` (35) — URL/path validation, output resolution, result placement
-- `schemas.test.ts` (39) — Zod validation for all 4 tools, boundary tests
+- `helpers.test.ts` (31) — URL/path validation, output resolution, result building
+- `env.test.ts` (19) — env parsing, glob handling, allowlist behavior
+- `logger.test.ts` (10) — log formatting and truncation safety
+- `schemas.test.ts` (64) — Zod validation for all tools, boundary tests
+- `fetch-images.integration.test.ts` (2) — end-to-end MCP tool call behavior
 
 ### Manual Testing
 1. Use `test-tool` with sample images to verify result placement
-2. Test each `result_placement` value with target MCP client
+2. Test `tool_result` (`resource_link` vs `image`) and `response_format` (`url` vs `b64_json`) with your target MCP client
 3. Verify compression with large images (>800KB)
+4. For videos, validate `wait_for_completion` timeouts and `openai-videos-download-content` outputs (video/thumbnail/spritesheet)
 
 ### Integration Testing
 ```bash
@@ -174,7 +209,7 @@ This server implements MCP 2025-11-25 specification:
 - `dotenv` — Environment loading
 
 ### Optional
-- `sharp` — Image compression (native module)
+- `sharp` — Image compression and video input_reference preprocessing (native module)
 
 ### Development
 - `typescript` — Strict compilation
@@ -188,6 +223,7 @@ This server implements MCP 2025-11-25 specification:
 2. Ensure no TypeScript errors with strict mode
 3. Follow existing code style (single-file, minimal abstractions)
 4. Document new environment variables in `env.sample`
+5. Update `AGENTS.md` when tools/env/tests change
 
 ## License
 
