@@ -8,6 +8,9 @@ import {
   openaiVideosRetrieveSchema,
   openaiVideosDeleteSchema,
   openaiVideosRetrieveContentSchema,
+  googleVideosGenerateSchema,
+  googleVideosRetrieveOperationSchema,
+  googleVideosRetrieveContentSchema,
   fetchImagesSchema,
   fetchImagesClientSchema,
   testImagesSchema,
@@ -15,6 +18,7 @@ import {
   type OpenAIImagesGenerateArgs,
   type OpenAIImagesEditArgs,
   type OpenAIVideosCreateArgs,
+  type GoogleVideosGenerateArgs,
   type FetchImagesArgs,
   type FetchImagesClientArgs,
   type TestImagesArgs,
@@ -234,6 +238,53 @@ describe("schemas module", () => {
     it("rejects invalid input_reference_background", () => {
       expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "blue" }).success).toBe(false);
       expect(openaiVideosCreateSchema.safeParse({ prompt: "test", input_reference_background: "#12345" }).success).toBe(false);
+    });
+  });
+
+  describe("googleVideosGenerateSchema (google-videos-generate)", () => {
+    it("validates minimal valid input and applies defaults", () => {
+      const input: GoogleVideosGenerateArgs = { prompt: "A cinematic sunset over mountains" };
+      const result = googleVideosGenerateSchema.safeParse(input);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.model).toBe("veo-2.0-generate-001");
+        expect(result.data.number_of_videos).toBe(1);
+        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.poll_interval_ms).toBe(10000);
+      }
+    });
+
+    it("rejects input without prompt or media", () => {
+      const result = googleVideosGenerateSchema.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects both input_reference and input_video_reference", () => {
+      const result = googleVideosGenerateSchema.safeParse({
+        prompt: "test",
+        input_reference: "/tmp/image.jpg",
+        input_video_reference: "/tmp/video.mp4",
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe("googleVideosRetrieveOperationSchema (google-videos-retrieve-operation)", () => {
+    it("validates required operation_name", () => {
+      expect(googleVideosRetrieveOperationSchema.safeParse({ operation_name: "operations/123" }).success).toBe(true);
+      expect(googleVideosRetrieveOperationSchema.safeParse({}).success).toBe(false);
+    });
+  });
+
+  describe("googleVideosRetrieveContentSchema (google-videos-retrieve-content)", () => {
+    it("validates required operation_name and applies default index", () => {
+      const result = googleVideosRetrieveContentSchema.safeParse({ operation_name: "operations/123" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.index).toBe(0);
+      }
     });
   });
 

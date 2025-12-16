@@ -29,7 +29,9 @@ import {
   createUrlPrefixChecker,
   mapFileToPublicUrl,
 } from "./lib/env.js";
+import { applySecretsToEnv, loadSecretsYaml, resolveSecretsFilePath } from "./lib/secrets.js";
 import { log } from "./lib/logger.js";
+import { estimateSoraVideoCost } from "./lib/pricing.js";
 import {
   testImagesSchema,
   openaiVideosCreateSchema,
@@ -38,6 +40,9 @@ import {
   openaiVideosRetrieveSchema,
   openaiVideosDeleteSchema,
   openaiVideosRetrieveContentSchema,
+  googleVideosGenerateSchema,
+  googleVideosRetrieveOperationSchema,
+  googleVideosRetrieveContentSchema,
   type TestImagesArgs,
   type OpenAIVideosCreateArgs,
   type OpenAIVideosRemixArgs,
@@ -45,12 +50,16 @@ import {
   type OpenAIVideosRetrieveArgs,
   type OpenAIVideosDeleteArgs,
   type OpenAIVideosRetrieveContentArgs,
+  type GoogleVideosGenerateArgs,
+  type GoogleVideosRetrieveOperationArgs,
+  type GoogleVideosRetrieveContentArgs,
 } from "./lib/schemas.js";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { TextContent, ImageContent, ResourceLink, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { OpenAI, AzureOpenAI, toFile, type Uploadable } from "openai";
+import { GoogleGenAI, GenerateVideosOperation, type Video } from "@google/genai";
 
 // Optional sharp import for image compression
 // Falls back to no-op if sharp is not available (e.g., in environments without native modules)
@@ -69,6 +78,24 @@ if (envFileIndex !== -1) {
 }
 
 const configLog = log.child("config");
+
+// Load `secrets.yaml` if present (same structure as fast-agent secrets template).
+// Keys in `secrets.yaml` override environment variables.
+const resolvedSecretsPath = resolveSecretsFilePath(process.argv, process.cwd());
+if (resolvedSecretsPath) {
+  try {
+    const secrets = loadSecretsYaml(resolvedSecretsPath);
+    const applied = applySecretsToEnv(secrets);
+    if (applied.length > 0) {
+      configLog.info("loaded secrets.yaml", { path: resolvedSecretsPath, applied });
+    } else {
+      configLog.debug("secrets.yaml found (no env changes)", { path: resolvedSecretsPath });
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    configLog.warn("failed to load secrets.yaml", { path: resolvedSecretsPath, error: message });
+  }
+}
 
 const configuredDirEntries = parseEnvList(process.env["MEDIA_GEN_DIRS"]);
 const baseDirEntries = configuredDirEntries.length > 0 ? configuredDirEntries : [getDefaultRootDir()];
@@ -130,6 +157,10 @@ function logResolvedEnv(): void {
     MEDIA_GEN_MCP_TEST_SAMPLE_DIR: process.env["MEDIA_GEN_MCP_TEST_SAMPLE_DIR"] ?? "<unset>",
     OPENAI_API_KEY: maskSecret(process.env["OPENAI_API_KEY"]),
     AZURE_OPENAI_API_KEY: maskSecret(process.env["AZURE_OPENAI_API_KEY"]),
+    GEMINI_API_KEY: maskSecret(process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"]),
+    GOOGLE_GENAI_USE_VERTEXAI: process.env["GOOGLE_GENAI_USE_VERTEXAI"] ?? "<unset>",
+    GOOGLE_CLOUD_PROJECT: process.env["GOOGLE_CLOUD_PROJECT"] ?? "<unset>",
+    GOOGLE_CLOUD_LOCATION: process.env["GOOGLE_CLOUD_LOCATION"] ?? "<unset>",
   });
 }
 
@@ -464,6 +495,33 @@ function getOpenAIVideosClient(toolName: string): OpenAI {
   return client;
 }
 
+function envNonEmpty(name: string): string | undefined {
+  const raw = process.env[name];
+  const trimmed = raw?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getGoogleGenAIClient(toolName: string): GoogleGenAI {
+  const useVertexAi = envNonEmpty("GOOGLE_GENAI_USE_VERTEXAI") === "true";
+  if (useVertexAi) {
+    const project = envNonEmpty("GOOGLE_CLOUD_PROJECT");
+    const location = envNonEmpty("GOOGLE_CLOUD_LOCATION");
+    if (!project) {
+      throw new Error(`${toolName} requires GOOGLE_CLOUD_PROJECT when GOOGLE_GENAI_USE_VERTEXAI=true`);
+    }
+    if (!location) {
+      throw new Error(`${toolName} requires GOOGLE_CLOUD_LOCATION when GOOGLE_GENAI_USE_VERTEXAI=true`);
+    }
+    return new GoogleGenAI({ vertexai: true, project, location });
+  }
+
+  const apiKey = envNonEmpty("GOOGLE_API_KEY") ?? envNonEmpty("GEMINI_API_KEY");
+  if (!apiKey) {
+    throw new Error(`${toolName} requires GOOGLE_API_KEY (or GEMINI_API_KEY) unless GOOGLE_GENAI_USE_VERTEXAI=true`);
+  }
+  return new GoogleGenAI({ apiKey });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -481,6 +539,13 @@ function normalizeImageMimeType(raw: string | undefined): string | undefined {
   const normalized = raw?.split(";")[0]?.trim().toLowerCase();
   if (!normalized) return undefined;
   if (!normalized.startsWith("image/")) return undefined;
+  return normalized;
+}
+
+function normalizeVideoMimeType(raw: string | undefined): string | undefined {
+  const normalized = raw?.split(";")[0]?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (!normalized.startsWith("video/")) return undefined;
   return normalized;
 }
 
@@ -510,6 +575,15 @@ function inferImageMimeFromFilePath(filePath: string): string {
   if (ext === ".webp") return "image/webp";
   if (ext === ".gif") return "image/gif";
   return "image/png";
+}
+
+function inferVideoMimeFromFilePath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".mp4") return "video/mp4";
+  if (ext === ".webm") return "video/webm";
+  if (ext === ".mov") return "video/quicktime";
+  if (ext === ".mkv") return "video/x-matroska";
+  return "video/mp4";
 }
 
 function parseHexColorToRgba(color: string): { r: number; g: number; b: number; alpha: number } {
@@ -570,6 +644,31 @@ async function fetchBinaryFromUrl(url: string, maxRedirects = 5): Promise<{ buff
       reject(new Error(`Timeout fetching ${url}`));
     });
   });
+}
+
+async function fetchBinaryFromUrlWithFetch(
+  url: string,
+  opts: { timeoutMs: number },
+): Promise<{ buffer: Buffer; contentType?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, redirect: "follow" });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch: HTTP ${res.status}`);
+    }
+    const contentType = res.headers.get("content-type");
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (contentType && contentType.trim().length > 0) {
+      return { buffer: buf, contentType };
+    }
+    return { buffer: buf };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to fetch ${url}: ${message}`);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function parseVideoSize(size: string): { width: number; height: number } {
@@ -643,6 +742,74 @@ async function loadImageBufferFromReference(
   const ext = imageMimeToExt(imageExtToMime(detectedFormat));
   const mimeType = imageExtToMime(ext);
   return { buffer, mimeType, ext };
+}
+
+async function loadImageBufferFromReferenceForGoogleVideo(
+  inputReference: string,
+  opts: { mimeTypeOverride?: string | undefined; toolName: string },
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  if (isHttpUrl(inputReference)) {
+    if (!isUrlAllowedByEnv(inputReference)) {
+      throw new Error("input_reference URL is not allowed by MEDIA_GEN_URLS");
+    }
+    log.child(opts.toolName).debug("fetching input_reference", { url: inputReference });
+    const { buffer, contentType } = await fetchBinaryFromUrl(inputReference);
+    const headerMime = normalizeImageMimeType(contentType);
+    const overrideMime = normalizeImageMimeType(opts.mimeTypeOverride);
+
+    const detectedFormat = await detectImageFormat(buffer);
+    const detectedMime = imageExtToMime(detectedFormat);
+
+    return { buffer, mimeType: overrideMime ?? headerMime ?? detectedMime };
+  }
+
+  if (isBase64Image(inputReference)) {
+    const parsed = parseBase64DataUrl(inputReference);
+    const mimeFromUrl = normalizeImageMimeType(parsed?.mimeType);
+    const overrideMime = normalizeImageMimeType(opts.mimeTypeOverride);
+    const base64 = (parsed ? parsed.base64 : inputReference).replace(/\s/g, "");
+    const buffer = Buffer.from(base64, "base64");
+
+    if (overrideMime) return { buffer, mimeType: overrideMime };
+    if (mimeFromUrl) return { buffer, mimeType: mimeFromUrl };
+
+    const detectedFormat = await detectImageFormat(buffer);
+    return { buffer, mimeType: imageExtToMime(detectedFormat) };
+  }
+
+  const resolved = resolvePathInPrimaryRoot(inputReference);
+  if (!isPathInAllowedDirs(resolved)) {
+    throw new Error("input_reference path is outside allowed MEDIA_GEN_DIRS roots");
+  }
+  const buffer = await fs.promises.readFile(resolved);
+  const detectedFormat = await detectImageFormat(buffer);
+
+  const overrideMime = normalizeImageMimeType(opts.mimeTypeOverride);
+  return { buffer, mimeType: overrideMime ?? imageExtToMime(detectedFormat) };
+}
+
+async function loadVideoBufferFromReferenceForGoogleVideo(
+  inputVideoReference: string,
+  opts: { toolName: string },
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  if (isHttpUrl(inputVideoReference)) {
+    if (!isUrlAllowedByEnv(inputVideoReference)) {
+      throw new Error("input_video_reference URL is not allowed by MEDIA_GEN_URLS");
+    }
+    log.child(opts.toolName).debug("fetching input_video_reference", { url: inputVideoReference });
+    const { buffer, contentType } = await fetchBinaryFromUrlWithFetch(inputVideoReference, { timeoutMs: 5 * 60_000 });
+    const headerMime = normalizeVideoMimeType(contentType);
+    const urlMime = inferVideoMimeFromFilePath(new URL(inputVideoReference).pathname);
+    return { buffer, mimeType: headerMime ?? urlMime };
+  }
+
+  const resolved = resolvePathInPrimaryRoot(inputVideoReference);
+  if (!isPathInAllowedDirs(resolved)) {
+    throw new Error("input_video_reference path is outside allowed MEDIA_GEN_DIRS roots");
+  }
+  const buffer = await fs.promises.readFile(resolved);
+  const mimeType = inferVideoMimeFromFilePath(resolved);
+  return { buffer, mimeType };
 }
 
 async function preprocessInputReferenceForVideo(
@@ -907,12 +1074,20 @@ interface OpenAIImageApiResponse {
       text_tokens?: number;
       image_tokens?: number;
     };
-  } | undefined;
+  } | null;
   // Additional fields from gpt-image-1 (all can be undefined when not provided)
   background?: string | undefined;
   output_format?: string | undefined;
   size?: string | undefined;
   quality?: string | undefined;
+}
+
+function extractUsageFromResponse(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const usage = record["usage"];
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  return usage as Record<string, unknown>;
 }
 
 // Helper: build MCP tool result for image responses
@@ -1179,7 +1354,7 @@ function buildImageToolResult(
         const rawApiResponse: OpenAIImageApiResponse = {
           created: (result as unknown as { created?: number }).created ?? Math.floor(Date.now() / 1000),
           data: rawApiResponseData,
-          usage: (result as unknown as { usage?: OpenAIImageApiResponse["usage"] }).usage,
+          usage: (result as unknown as { usage?: OpenAIImageApiResponse["usage"] }).usage ?? null,
           background: background,
           output_format: effectiveFormat,
           size: size,
@@ -1365,7 +1540,7 @@ function buildImageToolResult(
         const rawApiResponse: OpenAIImageApiResponse = {
           created: (result as unknown as { created?: number }).created ?? Math.floor(Date.now() / 1000),
           data: editApiResponseData,
-          usage: (result as unknown as { usage?: OpenAIImageApiResponse["usage"] }).usage,
+          usage: (result as unknown as { usage?: OpenAIImageApiResponse["usage"] }).usage ?? null,
           output_format: "png",
           size: size,
           quality: quality,
@@ -1437,13 +1612,16 @@ function buildImageToolResult(
         };
 
         const created = await openai.videos.create(createParams);
+        const pricing = estimateSoraVideoCost({ model: created.model, seconds: created.seconds, size: created.size });
+        const usage = extractUsageFromResponse(created);
 
         content.push({
           type: "text" as const,
-          text: `video_id=${created.id} status=${created.status} progress=${created.progress}`,
+          text: `video_id=${created.id} status=${created.status} progress=${created.progress}${pricing ? ` cost_usd=${pricing.cost}` : ""}`,
         });
 
         if (!wait_for_completion) {
+          content.push({ type: "text" as const, text: JSON.stringify({ video_id: created.id, pricing, usage }, null, 2) });
           content.push({ type: "text" as const, text: JSON.stringify(created, null, 2) });
           return {
             content,
@@ -1456,6 +1634,8 @@ function buildImageToolResult(
           pollIntervalMs: poll_interval_ms,
           toolName: "openai-videos-create",
         });
+        const finalPricing = estimateSoraVideoCost({ model: finalVideo.model, seconds: finalVideo.seconds, size: finalVideo.size });
+        const finalUsage = extractUsageFromResponse(finalVideo);
 
 	        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
 	        const multipleVariants = variants.length > 1;
@@ -1474,7 +1654,7 @@ function buildImageToolResult(
           });
         }
 
-        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets }, null, 2) });
+        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets, pricing: finalPricing, usage: finalUsage }, null, 2) });
         content.push({ type: "text" as const, text: JSON.stringify(finalVideo, null, 2) });
 
         return {
@@ -1512,13 +1692,16 @@ function buildImageToolResult(
 
         const content: ContentBlock[] = [];
         const remixed = await openai.videos.remix(video_id, { prompt });
+        const pricing = estimateSoraVideoCost({ model: remixed.model, seconds: remixed.seconds, size: remixed.size });
+        const usage = extractUsageFromResponse(remixed);
 
         content.push({
           type: "text" as const,
-          text: `video_id=${remixed.id} status=${remixed.status} progress=${remixed.progress} remixed_from=${remixed.remixed_from_video_id ?? video_id}`,
+          text: `video_id=${remixed.id} status=${remixed.status} progress=${remixed.progress} remixed_from=${remixed.remixed_from_video_id ?? video_id}${pricing ? ` cost_usd=${pricing.cost}` : ""}`,
         });
 
         if (!wait_for_completion) {
+          content.push({ type: "text" as const, text: JSON.stringify({ video_id: remixed.id, pricing, usage }, null, 2) });
           content.push({ type: "text" as const, text: JSON.stringify(remixed, null, 2) });
           return {
             content,
@@ -1531,6 +1714,8 @@ function buildImageToolResult(
           pollIntervalMs: poll_interval_ms,
           toolName: "openai-videos-remix",
         });
+        const finalPricing = estimateSoraVideoCost({ model: finalVideo.model, seconds: finalVideo.seconds, size: finalVideo.size });
+        const finalUsage = extractUsageFromResponse(finalVideo);
 
 	        const variants = (download_variants ?? ["video"]) as VideoDownloadVariant[];
 	        const multipleVariants = variants.length > 1;
@@ -1549,7 +1734,7 @@ function buildImageToolResult(
           });
         }
 
-        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets }, null, 2) });
+        content.push({ type: "text" as const, text: JSON.stringify({ video_id: finalVideo.id, assets, pricing: finalPricing, usage: finalUsage }, null, 2) });
         content.push({ type: "text" as const, text: JSON.stringify(finalVideo, null, 2) });
 
         return {
@@ -1668,17 +1853,371 @@ function buildImageToolResult(
 	        await validateOutputDirectory(basePath);
 
         const downloaded = await downloadVideoAssetToFile(openai, video.id, variant, basePath, false);
+        const pricing = estimateSoraVideoCost({ model: video.model, seconds: video.seconds, size: video.size });
+        const usage = extractUsageFromResponse(video);
 
         return {
           content: [
             downloaded.resourceLink,
-            { type: "text", text: JSON.stringify({ video_id: video.id, variant, uri: downloaded.uri }, null, 2) },
+            { type: "text", text: JSON.stringify({ video_id: video.id, variant, uri: downloaded.uri, pricing, usage }, null, 2) },
             { type: "text", text: JSON.stringify(video, null, 2) },
           ],
           structuredContent: video as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return buildErrorResult(err, "openai-videos-retrieve-content");
+      }
+    },
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Google Videos (Gemini / Veo)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function createGoogleVideosOperation(operationName: string): GenerateVideosOperation {
+    const op = new GenerateVideosOperation();
+    op.name = operationName;
+    return op;
+  }
+
+  function appendGoogleApiKeyToUrl(url: string): string {
+    const apiKey = envNonEmpty("GOOGLE_API_KEY") ?? envNonEmpty("GEMINI_API_KEY");
+    if (!apiKey) return url;
+    try {
+      const u = new URL(url);
+      if (!u.searchParams.has("key")) {
+        u.searchParams.set("key", apiKey);
+      }
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  async function waitForGoogleVideosCompletion(opts: {
+    ai: GoogleGenAI;
+    operation: GenerateVideosOperation;
+    timeoutMs: number;
+    pollIntervalMs: number;
+    toolName: string;
+  }): Promise<GenerateVideosOperation> {
+    const start = Date.now();
+    let current = opts.operation;
+
+    while (Date.now() - start <= opts.timeoutMs) {
+      current = await opts.ai.operations.getVideosOperation({ operation: current });
+      if (current.done) {
+        if (current.error) {
+          throw new Error(`${opts.toolName} failed: ${JSON.stringify(current.error)}`);
+        }
+        return current;
+      }
+      await sleep(opts.pollIntervalMs);
+    }
+
+    const last = await opts.ai.operations.getVideosOperation({ operation: current });
+    throw new Error(`${opts.toolName} timeout after ${opts.timeoutMs}ms (done=${last.done ?? false})`);
+  }
+
+  function buildGoogleVideoOutputPath(basePath: string, index: number, extWithDot: string, total: number): string {
+    const parsed = path.parse(basePath);
+    const baseName = parsed.name || parsed.base;
+    const ext = parsed.ext || extWithDot;
+    if (total > 1) return path.join(parsed.dir, `${baseName}_${index + 1}${ext}`);
+    return path.join(parsed.dir, `${baseName}${ext}`);
+  }
+
+  async function downloadGoogleVideoToFile(opts: {
+    toolName: string;
+    basePath: string;
+    index: number;
+    total: number;
+    video: Video;
+  }): Promise<{ resourceLink: ResourceLink; filePath: string; uri: string; mimeType: string }> {
+    // Prefer embedded base64 when present, otherwise fetch by URI.
+    if (opts.video.videoBytes) {
+      const contentType = opts.video.mimeType ?? null;
+      const ext = inferVideoExtension(contentType, "video");
+      const mimeType = inferMimeType(contentType, ext);
+      const filePath = buildGoogleVideoOutputPath(opts.basePath, opts.index, ext, opts.total);
+
+      if (!isPathInAllowedDirs(filePath)) {
+        throw new Error(`Output path is outside allowed MEDIA_GEN_DIRS roots: ${filePath}`);
+      }
+      await ensureDirectoryWritable(filePath);
+
+      const buf = Buffer.from(opts.video.videoBytes.replace(/\s/g, ""), "base64");
+      await fs.promises.writeFile(filePath, buf);
+
+      const httpUrl = buildPublicUrlForFile(filePath);
+      const uri = httpUrl ?? `file://${filePath}`;
+      const resourceLink: ResourceLink = { type: "resource_link", uri, name: path.basename(filePath), mimeType };
+      return { resourceLink, filePath, uri, mimeType };
+    }
+
+    if (!opts.video.uri) {
+      throw new Error("Generated video has neither videoBytes nor uri");
+    }
+
+    const downloadUrl = appendGoogleApiKeyToUrl(opts.video.uri);
+    if (!isUrlAllowedByEnv(downloadUrl)) {
+      throw new Error("Video download URL is not allowed by MEDIA_GEN_URLS");
+    }
+
+    const fetched = await fetchBinaryFromUrlWithFetch(downloadUrl, { timeoutMs: 10 * 60_000 });
+    const ext = inferVideoExtension(fetched.contentType ?? null, "video");
+    const mimeType = inferMimeType(fetched.contentType ?? null, ext);
+    const filePath = buildGoogleVideoOutputPath(opts.basePath, opts.index, ext, opts.total);
+
+    if (!isPathInAllowedDirs(filePath)) {
+      throw new Error(`Output path is outside allowed MEDIA_GEN_DIRS roots: ${filePath}`);
+    }
+    await ensureDirectoryWritable(filePath);
+
+    await fs.promises.writeFile(filePath, fetched.buffer);
+
+    const httpUrl = buildPublicUrlForFile(filePath);
+    const uri = httpUrl ?? `file://${filePath}`;
+    const resourceLink: ResourceLink = { type: "resource_link", uri, name: path.basename(filePath), mimeType };
+    return { resourceLink, filePath, uri, mimeType };
+  }
+
+  server.registerTool(
+    "google-videos-generate",
+    {
+      title: "Google Videos Generate",
+      description:
+        "Generate videos using Google GenAI (Veo). Can optionally wait for completion and download generated videos to MEDIA_GEN_DIRS.",
+      inputSchema: googleVideosGenerateSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: GoogleVideosGenerateArgs) => {
+      try {
+        const validated = googleVideosGenerateSchema.parse(args);
+
+        const ai = getGoogleGenAIClient("google-videos-generate");
+
+        const prompt = typeof validated.prompt === "string" ? validated.prompt.trim() : undefined;
+        const model = validated.model ?? "veo-2.0-generate-001";
+
+        const config: {
+          numberOfVideos?: number;
+          aspectRatio?: string;
+          durationSeconds?: number;
+          personGeneration?: string;
+        } = {};
+
+        if (typeof validated.number_of_videos === "number") config.numberOfVideos = validated.number_of_videos;
+        if (validated.aspect_ratio) config.aspectRatio = validated.aspect_ratio;
+        if (typeof validated.duration_seconds === "number") config.durationSeconds = validated.duration_seconds;
+        if (validated.person_generation) config.personGeneration = validated.person_generation;
+
+        const params: {
+          model: string;
+          prompt?: string;
+          image?: { imageBytes: string; mimeType?: string };
+          video?: Video;
+          config?: typeof config;
+        } = { model, ...(prompt ? { prompt } : {}), ...(Object.keys(config).length > 0 ? { config } : {}) };
+
+        if (validated.input_reference) {
+          const loaded = await loadImageBufferFromReferenceForGoogleVideo(validated.input_reference, {
+            mimeTypeOverride: validated.input_reference_mime_type,
+            toolName: "google-videos-generate",
+          });
+          params.image = {
+            imageBytes: loaded.buffer.toString("base64"),
+            mimeType: loaded.mimeType,
+          };
+        }
+
+        if (validated.input_video_reference) {
+          const loaded = await loadVideoBufferFromReferenceForGoogleVideo(validated.input_video_reference, {
+            toolName: "google-videos-generate",
+          });
+          params.video = {
+            videoBytes: loaded.buffer.toString("base64"),
+            mimeType: loaded.mimeType,
+          };
+        }
+
+        const operation = await ai.models.generateVideos(params);
+
+        if (!validated.wait_for_completion) {
+          return {
+            content: [
+              { type: "text", text: `Started Google video operation: ${operation.name ?? "<unknown>"}` },
+              { type: "text", text: JSON.stringify(operation, null, 2) },
+            ],
+            structuredContent: operation as unknown as Record<string, unknown>,
+          };
+        }
+
+        const finalOperation = await waitForGoogleVideosCompletion({
+          ai,
+          operation,
+          timeoutMs: validated.timeout_ms ?? 300000,
+          pollIntervalMs: validated.poll_interval_ms ?? 10000,
+          toolName: "google-videos-generate",
+        });
+
+        const downloadWhenDone = validated.download_when_done ?? true;
+        const generated = finalOperation.response?.generatedVideos ?? [];
+
+        const content: ContentBlock[] = [
+          { type: "text", text: `Google video operation completed: ${finalOperation.name ?? "<unknown>"}` },
+        ];
+
+        const downloads: Array<{ index: number; uri: string; mimeType: string; file: string }> = [];
+
+        if (downloadWhenDone) {
+          const basePath = resolveVideoBaseOutputPath(undefined, "google-videos-generate", finalOperation.name);
+          await validateOutputDirectory(basePath);
+
+          const videos = generated
+            .map((item) => item.video)
+            .filter((video): video is Video => !!video);
+
+          if (videos.length === 0) {
+            throw new Error("No generated videos to download");
+          }
+
+          for (let i = 0; i < videos.length; i++) {
+            const downloaded = await downloadGoogleVideoToFile({
+              toolName: "google-videos-generate",
+              basePath,
+              index: i,
+              total: videos.length,
+              video: videos[i]!,
+            });
+            content.push(downloaded.resourceLink);
+            downloads.push({
+              index: i,
+              uri: downloaded.uri,
+              mimeType: downloaded.mimeType,
+              file: `file://${downloaded.filePath}`,
+            });
+          }
+        }
+
+        content.push({
+          type: "text",
+          text: JSON.stringify({ operation_name: finalOperation.name, generated_videos: generated.length, downloads }, null, 2),
+        });
+        content.push({ type: "text", text: JSON.stringify(finalOperation, null, 2) });
+
+        return {
+          content,
+          structuredContent: finalOperation as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "google-videos-generate");
+      }
+    },
+  );
+
+  server.registerTool(
+    "google-videos-retrieve-operation",
+    {
+      title: "Google Videos Retrieve Operation",
+      description: "Retrieve the status/result of a Google video generation operation.",
+      inputSchema: googleVideosRetrieveOperationSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: GoogleVideosRetrieveOperationArgs) => {
+      try {
+        const validated = googleVideosRetrieveOperationSchema.parse(args);
+        const ai = getGoogleGenAIClient("google-videos-retrieve-operation");
+
+        const op = createGoogleVideosOperation(validated.operation_name);
+        const latest = await ai.operations.getVideosOperation({ operation: op });
+
+        const summary = {
+          operation_name: latest.name ?? validated.operation_name,
+          done: latest.done ?? false,
+          has_error: !!latest.error,
+          generated_videos: latest.response?.generatedVideos?.length ?? 0,
+        };
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(summary, null, 2) },
+            { type: "text", text: JSON.stringify(latest, null, 2) },
+          ],
+          structuredContent: latest as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "google-videos-retrieve-operation");
+      }
+    },
+  );
+
+  server.registerTool(
+    "google-videos-retrieve-content",
+    {
+      title: "Google Videos Retrieve Content",
+      description:
+        "Download generated video content for a completed Google video operation, write it under MEDIA_GEN_DIRS, and return resource_link(s).",
+      inputSchema: googleVideosRetrieveContentSchema.shape,
+      annotations: openaiToolAnnotations,
+    },
+    async (args: GoogleVideosRetrieveContentArgs) => {
+      try {
+        const validated = googleVideosRetrieveContentSchema.parse(args);
+        const ai = getGoogleGenAIClient("google-videos-retrieve-content");
+
+        const op = createGoogleVideosOperation(validated.operation_name);
+        const latest = await ai.operations.getVideosOperation({ operation: op });
+
+        if (!latest.done) {
+          throw new Error(`Operation is not done yet: ${latest.name ?? validated.operation_name}`);
+        }
+        if (latest.error) {
+          throw new Error(`Operation failed: ${JSON.stringify(latest.error)}`);
+        }
+
+        const generated = latest.response?.generatedVideos ?? [];
+        const videos = generated
+          .map((item) => item.video)
+          .filter((video): video is Video => !!video);
+
+        if (videos.length === 0) {
+          throw new Error("No generated videos found on operation response");
+        }
+
+        const index = validated.index ?? 0;
+        if (index < 0 || index >= videos.length) {
+          throw new Error(`index out of range: ${index} (available: 0..${videos.length - 1})`);
+        }
+
+        const basePath = resolveVideoBaseOutputPath(undefined, "google-videos-retrieve-content", latest.name ?? validated.operation_name);
+        await validateOutputDirectory(basePath);
+
+        const downloaded = await downloadGoogleVideoToFile({
+          toolName: "google-videos-retrieve-content",
+          basePath,
+          index,
+          total: videos.length,
+          video: videos[index]!,
+        });
+
+        const summary = {
+          operation_name: latest.name ?? validated.operation_name,
+          index,
+          uri: downloaded.uri,
+          file: `file://${downloaded.filePath}`,
+        };
+
+        return {
+          content: [
+            downloaded.resourceLink,
+            { type: "text", text: JSON.stringify(summary, null, 2) },
+            { type: "text", text: JSON.stringify(latest, null, 2) },
+          ],
+          structuredContent: latest as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return buildErrorResult(err, "google-videos-retrieve-content");
       }
     },
   );

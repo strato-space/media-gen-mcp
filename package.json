@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
+    "@google/genai": "^1.33.0",
     "@modelcontextprotocol/sdk": "^1.23.0",
     "dotenv": "^17.2.3",
     "openai": "^6.9.1",
@@ -30,6 +31,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
+    "which": "which tsx",
     "esbuild": "esbuild src/index.ts src/lib/compression.ts --bundle --platform=node --target=node20 --format=esm --outdir=dist --packages=external",
     "start": "node dist/index.js",
     "mcp": "npm run start",

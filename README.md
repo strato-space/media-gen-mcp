@@ -13,13 +13,14 @@
 
 ---
 
-**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1`) and OpenAI Videos (Sora): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
+**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1`), OpenAI Videos (Sora), and Google GenAI Videos (Veo): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
 
 **Design principle:** spec-first, type-safe image tooling – strict OpenAI Images API + MCP compliance with fully static TypeScript types and flexible result placements/response formats for different clients.
 
 - **Generate images** from text prompts using OpenAI's `gpt-image-1` model (with DALL·E support planned in future versions).
 - **Edit images** (inpainting, outpainting, compositing) from 1 up to 16 images at once, with advanced prompt control.
 - **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
+- **Generate videos** via Google GenAI (Veo) with operation polling and file-first downloads.
 - **Fetch & compress images** from HTTP(S) URLs or local file paths with smart size/quality optimization.
 - **Debug MCP output shapes** with a `test-images` tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
 - **Integrates with**: [fast-agent](https://github.com/strato-space/fast-agent), [Windsurf](https://windsurf.com), [Claude Desktop](https://www.anthropic.com/claude/desktop), [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com/), and any MCP-compatible client.
@@ -43,6 +44,11 @@
   - `openai-videos-retrieve` mirrors [`videos/retrieve`](https://platform.openai.com/docs/api-reference/videos/retrieve).
   - `openai-videos-delete` mirrors [`videos/delete`](https://platform.openai.com/docs/api-reference/videos/delete).
   - `openai-videos-retrieve-content` mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
+
+- **Google GenAI (Veo) operations + downloads (generate / retrieve operation / retrieve content)**  
+  - `google-videos-generate` starts a long-running operation (`ai.models.generateVideos`) and can optionally wait for completion and download `.mp4` outputs.
+  - `google-videos-retrieve-operation` polls an existing operation.
+  - `google-videos-retrieve-content` downloads an `.mp4` from a completed operation, returning MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
 
 - **Fetch and process images from URLs or files**  
   `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
@@ -114,9 +120,10 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 | `helpers` | 31 | URL/path validation, output resolution, result placement, resource links |
 | `env` | 19 | Configuration parsing, env validation, defaults |
 | `logger` | 10 | Structured logging + truncation safety |
-| `schemas` | 64 | Zod schema validation for all tools, type inference |
-| `fetch-images` (integration) | 2 | End-to-end MCP tool call behavior |
-| `fetch-videos` (integration) | 2 | End-to-end MCP tool call behavior |
+| `pricing` | 5 | Sora pricing estimate helpers |
+| `schemas` | 69 | Zod schema validation for all tools, type inference |
+| `fetch-images` (integration) | 3 | End-to-end MCP tool call behavior |
+| `fetch-videos` (integration) | 3 | End-to-end MCP tool call behavior |
 
 **Test categories:**
 
@@ -132,10 +139,11 @@ npm run test
 # ✓ test/helpers.test.ts (31 tests)
 # ✓ test/env.test.ts (19 tests)
 # ✓ test/logger.test.ts (10 tests)
-# ✓ test/schemas.test.ts (64 tests)
-# ✓ test/fetch-images.integration.test.ts (2 tests)
-# ✓ test/fetch-videos.integration.test.ts (2 tests)
-# Tests: 140 passed
+# ✓ test/pricing.test.ts (5 tests)
+# ✓ test/schemas.test.ts (69 tests)
+# ✓ test/fetch-images.integration.test.ts (3 tests)
+# ✓ test/fetch-videos.integration.test.ts (3 tests)
+# Tests: 152 passed
 ```
 
 ### Run directly via npx (no local clone)
@@ -147,6 +155,25 @@ npx -y github:strato-space/media-gen-mcp --env-file /path/to/media-gen.env
 ```
 
 The `--env-file` argument tells the server which env file to load (e.g. when you keep secrets outside the cloned directory). The file should contain `OPENAI_API_KEY`, optional Azure variables, and any `MEDIA_GEN_MCP_*` settings.
+
+### `secrets.yaml` (optional)
+
+You can keep API keys (and optional Google Vertex AI settings) in a `secrets.yaml` file (compatible with the fast-agent secrets template):
+
+```yaml
+openai:
+  api_key: <your-api-key-here>
+anthropic:
+  api_key: <your-api-key-here>
+google:
+  api_key: <your-api-key-here>
+  vertex_ai:
+    enabled: true
+    project_id: your-gcp-project-id
+    location: europe-west4
+```
+
+`media-gen-mcp` loads `secrets.yaml` from the current working directory (or from `--secrets-file /path/to/secrets.yaml`) and applies it to env vars; values in `secrets.yaml` override env, and `<your-api-key-here>` placeholders are ignored.
 
 ---
 
@@ -390,10 +417,10 @@ Arguments (input schema):
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
-- `tool_result` ("resource_link" | "image", default: "resource_link")
-  - Controls `content[]` shape:
-    - `"resource_link"` emits ResourceLink items (file/URL-based)
-    - `"image"` emits base64 ImageContent blocks
+  - `tool_result` ("resource_link" | "image", default: "resource_link")
+    - Controls `content[]` shape:
+      - `"resource_link"` emits ResourceLink items (file/URL-based)
+      - `"image"` emits base64 ImageContent blocks
 
 Behavior notes:
 
@@ -525,6 +552,7 @@ Output (MCP CallToolResult):
 
 - `structuredContent`: OpenAI `Video` object (job metadata; final state when `wait_for_completion=true`).
 - `content`: includes `resource_link` items for downloaded assets (when requested) and text blocks with JSON.
+  - Includes a summary JSON block: `{ "video_id": "...", "pricing": { "currency": "USD", "model": "...", "size": "...", "seconds": 4, "price": 0.1, "cost": 0.4 } | null, "usage": { ... } | null }`.
 
 ### openai-videos-remix
 
@@ -571,6 +599,65 @@ Arguments (input schema):
 
 - `video_id` (string, required)
 - `variant` ("video" | "thumbnail" | "spritesheet", default: "video")
+
+Output (MCP CallToolResult):
+
+- `structuredContent`: OpenAI `Video` object.
+- `content`: a `resource_link`, a summary JSON block `{ video_id, variant, uri, pricing, usage }`, plus the full video JSON.
+
+### google-videos-generate
+
+Create a Google video generation operation using the Google GenAI SDK (`@google/genai`) `ai.models.generateVideos`.
+
+Arguments (input schema):
+
+- `prompt` (string, optional)
+- `input_reference` (string, optional) — image-to-video input (HTTP(S) URL, base64/data URL, or file path under `MEDIA_GEN_DIRS`)
+- `input_reference_mime_type` (string, optional) — override for `input_reference` MIME type (must be `image/*`)
+- `input_video_reference` (string, optional) — video-extension input (HTTP(S) URL or file path under `MEDIA_GEN_DIRS`; mutually exclusive with `input_reference`)
+- `model` (string, default: `"veo-2.0-generate-001"`)
+- `number_of_videos` (integer, default: `1`)
+- `aspect_ratio` (`"16:9" | "9:16"`, optional)
+- `duration_seconds` (integer, optional)
+- `person_generation` (`"DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL"`, optional)
+- `wait_for_completion` (boolean, default: `false`)
+- `timeout_ms` (integer, default: `300000`)
+- `poll_interval_ms` (integer, default: `10000`)
+- `download_when_done` (boolean, optional; defaults to `true` when waiting)
+
+Requirements:
+
+- Gemini Developer API: set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), or `google.api_key` in `secrets.yaml`.
+- Vertex AI: set `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION` (or `google.vertex_ai.*` in `secrets.yaml`).
+
+Output:
+
+- `structuredContent`: Google operation object (includes `name`, `done`, and `response.generatedVideos[]` when available).
+- `content`: status text, optional `.mp4` `resource_link` items (when downloaded), plus JSON text blocks for compatibility.
+
+### google-videos-retrieve-operation
+
+Retrieve/poll an existing Google video operation (`ai.operations.getVideosOperation`).
+
+- `operation_name` (string, required)
+
+Output:
+
+- `structuredContent`: Google operation object.
+- `content`: JSON text blocks with a short summary + the full operation.
+
+### google-videos-retrieve-content
+
+Download `.mp4` content for a completed operation and return file-first MCP `resource_link` output.
+
+- `operation_name` (string, required)
+- `index` (integer, default: `0`) — selects `response.generatedVideos[index]`
+
+Recommended workflow:
+
+1) Call `google-videos-generate` with `wait_for_completion=false` to get `operation_name`.
+2) Poll `google-videos-retrieve-operation` until `done=true`.
+3) Call `google-videos-retrieve-content` to download an `.mp4` and receive a `resource_link`.
 
 ### fetch-images
 

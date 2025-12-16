@@ -126,6 +126,83 @@ export const openaiVideosRetrieveContentSchema = z.object({
     .describe("Which downloadable asset to return (default: video)."),
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Google Videos schemas
+// ─────────────────────────────────────────────────────────────────────────────
+
+const googleVideoAspectRatioEnum = z.enum(["16:9", "9:16"]);
+export type GoogleVideoAspectRatioType = z.infer<typeof googleVideoAspectRatioEnum>;
+
+const googlePersonGenerationEnum = z.enum(["DONT_ALLOW", "ALLOW_ADULT", "ALLOW_ALL"]);
+export type GooglePersonGenerationType = z.infer<typeof googlePersonGenerationEnum>;
+
+const imageMimeTypeSchema = z.string().regex(/^image\/[a-zA-Z0-9.+-]+$/, {
+  message: "Expected an image MIME type like image/jpeg",
+});
+
+export const googleVideosGenerateSchema = z.object({
+  prompt: z.string().max(32000).optional()
+    .describe("Text prompt that describes the video to generate (max 32K chars). Required unless an input image/video is provided."),
+  input_reference: nonEmptyString.optional()
+    .describe("Optional image reference (image-to-video): HTTP(S) URL, base64 / data URL, or file path under MEDIA_GEN_DIRS."),
+  input_reference_mime_type: imageMimeTypeSchema.optional()
+    .describe("Optional override for input image MIME type (e.g. image/jpeg). Useful when input_reference is raw base64 without a data URL header."),
+  input_video_reference: nonEmptyString.optional()
+    .describe("Optional input video reference (video extension): HTTP(S) URL or file path under MEDIA_GEN_DIRS. Mutually exclusive with input_reference."),
+
+  model: nonEmptyString.default("veo-2.0-generate-001").optional()
+    .describe("Google video model id (default: veo-2.0-generate-001)."),
+
+  number_of_videos: z.number().int().min(1).max(4).default(1).optional()
+    .describe("Number of videos to generate (default: 1)."),
+  aspect_ratio: googleVideoAspectRatioEnum.optional()
+    .describe("Aspect ratio for the generated video."),
+  duration_seconds: z.number().int().min(1).max(120).optional()
+    .describe("Video duration in seconds (provider/model-dependent)."),
+  person_generation: googlePersonGenerationEnum.optional()
+    .describe("Controls whether people are allowed in the generated video."),
+
+  wait_for_completion: z.boolean().default(false).optional()
+    .describe("If true, poll the operation until done (then optionally download)."),
+  timeout_ms: z.number().int().min(1000).max(3600000).default(300000).optional()
+    .describe("Max time to wait for completion when wait_for_completion is true (default: 300000)."),
+  poll_interval_ms: z.number().int().min(1000).max(60000).default(10000).optional()
+    .describe("Polling interval when wait_for_completion is true (default: 10000)."),
+
+  download_when_done: z.boolean().optional()
+    .describe("When waiting, whether to download generated videos to MEDIA_GEN_DIRS[0]. Defaults to true when wait_for_completion=true, otherwise false."),
+}).superRefine((val, ctx) => {
+  const hasPrompt = typeof val.prompt === "string" && val.prompt.trim().length > 0;
+  const hasImage = typeof val.input_reference === "string" && val.input_reference.trim().length > 0;
+  const hasVideo = typeof val.input_video_reference === "string" && val.input_video_reference.trim().length > 0;
+
+  if (!hasPrompt && !hasImage && !hasVideo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide at least one of: prompt, input_reference, input_video_reference",
+      path: [],
+    });
+  }
+
+  if (hasImage && hasVideo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "input_reference and input_video_reference are mutually exclusive",
+      path: ["input_video_reference"],
+    });
+  }
+});
+
+export const googleVideosRetrieveOperationSchema = z.object({
+  operation_name: nonEmptyString.describe("Google video operation name/id."),
+});
+
+export const googleVideosRetrieveContentSchema = z.object({
+  operation_name: nonEmptyString.describe("Google video operation name/id."),
+  index: z.number().int().min(0).default(0).optional()
+    .describe("Which generatedVideos[index] to download (default: 0)."),
+});
+
 // openai-images-generate base schema (shared params)
 export const openaiImagesGenerateBaseSchema = z.object({
   prompt: z.string().max(32000).describe("Text prompt describing the desired image (max 32K chars)."),
@@ -257,3 +334,7 @@ export type OpenAIVideosListArgs = z.input<typeof openaiVideosListSchema>;
 export type OpenAIVideosRetrieveArgs = z.input<typeof openaiVideosRetrieveSchema>;
 export type OpenAIVideosDeleteArgs = z.input<typeof openaiVideosDeleteSchema>;
 export type OpenAIVideosRetrieveContentArgs = z.input<typeof openaiVideosRetrieveContentSchema>;
+
+export type GoogleVideosGenerateArgs = z.input<typeof googleVideosGenerateSchema>;
+export type GoogleVideosRetrieveOperationArgs = z.input<typeof googleVideosRetrieveOperationSchema>;
+export type GoogleVideosRetrieveContentArgs = z.input<typeof googleVideosRetrieveContentSchema>;
