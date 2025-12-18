@@ -201,7 +201,7 @@ describe("schemas module", () => {
         expect(result.data.model).toBe("sora-2");
         expect(result.data.input_reference_fit).toBe("contain");
         expect(result.data.input_reference_background).toBe("blur");
-        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.wait_for_completion).toBe(true);
         expect(result.data.timeout_ms).toBe(900000);
         expect(result.data.poll_interval_ms).toBe(2000);
         expect(result.data.download_variants).toEqual(["video"]);
@@ -260,7 +260,7 @@ describe("schemas module", () => {
       if (result.success) {
         expect(result.data.model).toBe("veo-3.1-generate-001");
         expect(result.data.number_of_videos).toBe(1);
-        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.wait_for_completion).toBe(true);
         expect(result.data.timeout_ms).toBe(900000);
         expect(result.data.poll_interval_ms).toBe(10000);
         expect(result.data.tool_result).toBe("resource_link");
@@ -321,7 +321,7 @@ describe("schemas module", () => {
       const result = openaiVideosRemixSchema.safeParse({ video_id: "vid_123", prompt: "Make it noir" });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.wait_for_completion).toBe(false);
+        expect(result.data.wait_for_completion).toBe(true);
         expect(result.data.timeout_ms).toBe(900000);
         expect(result.data.poll_interval_ms).toBe(2000);
         expect(result.data.download_variants).toEqual(["video"]);

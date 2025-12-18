@@ -89,8 +89,8 @@ export const openaiVideosCreateSchema = z.object({
   size: videoSizeEnum.optional()
     .describe("Output resolution formatted as width x height (default: 720x1280)."),
 
-  wait_for_completion: z.boolean().default(false).optional()
-    .describe("If true, poll the job until completed/failed (then optionally download assets)."),
+  wait_for_completion: z.boolean().default(true).optional()
+    .describe("If true, poll the job until completed/failed (then optionally download assets). Default: true."),
   timeout_ms: z.number().int().min(1000).max(3600000).default(900000).optional()
     .describe("Max time to wait for completion when wait_for_completion is true (default: 900000)."),
   poll_interval_ms: z.number().int().min(250).max(60000).default(2000).optional()
@@ -107,8 +107,8 @@ export const openaiVideosRemixSchema = z.object({
   video_id: nonEmptyString.describe("Source video job id to remix."),
   prompt: z.string().max(32000).describe("Updated prompt that directs the remix (max 32K chars)."),
 
-  wait_for_completion: z.boolean().default(false).optional()
-    .describe("If true, poll the job until completed/failed (then optionally download assets)."),
+  wait_for_completion: z.boolean().default(true).optional()
+    .describe("If true, poll the job until completed/failed (then optionally download assets). Default: true."),
   timeout_ms: z.number().int().min(1000).max(3600000).default(900000).optional()
     .describe("Max time to wait for completion when wait_for_completion is true (default: 900000)."),
   poll_interval_ms: z.number().int().min(250).max(60000).default(2000).optional()
@@ -181,8 +181,8 @@ export const googleVideosGenerateSchema = z.object({
   person_generation: googlePersonGenerationEnum.optional()
     .describe("Controls whether people are allowed in the generated video."),
 
-  wait_for_completion: z.boolean().default(false).optional()
-    .describe("If true, poll the operation until done (then optionally download)."),
+  wait_for_completion: z.boolean().default(true).optional()
+    .describe("If true, poll the operation until done (then optionally download). Default: true."),
   timeout_ms: z.number().int().min(1000).max(3600000).default(900000).optional()
     .describe("Max time to wait for completion when wait_for_completion is true (default: 900000)."),
   poll_interval_ms: z.number().int().min(1000).max(60000).default(10000).optional()

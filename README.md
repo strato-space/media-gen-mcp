@@ -564,7 +564,7 @@ Arguments (input schema):
 - `model` ("sora-2" | "sora-2-pro", default: "sora-2")
 - `seconds` ("4" | "8" | "12", optional)
 - `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
-- `wait_for_completion` (boolean, default: false)
+- `wait_for_completion` (boolean, default: true)
   - When true, the server polls `openai-videos-retrieve` until `completed` or `failed` (or timeout), then downloads assets.
 - `timeout_ms` (integer, default: 900000)
 - `poll_interval_ms` (integer, default: 2000)
@@ -589,7 +589,7 @@ Arguments (input schema):
 
 - `video_id` (string, required)
 - `prompt` (string, required)
-- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants`, `tool_result` — same semantics as `openai-videos-create`.
+- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants`, `tool_result` — same semantics as `openai-videos-create` (default wait is true).
 
 ### openai-videos-list
 
@@ -648,7 +648,7 @@ Arguments (input schema):
 - `aspect_ratio` (`"16:9" | "9:16"`, optional)
 - `duration_seconds` (integer, optional)
 - `person_generation` (`"DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL"`, optional)
-- `wait_for_completion` (boolean, default: `false`)
+- `wait_for_completion` (boolean, default: `true`)
 - `timeout_ms` (integer, default: `900000`)
 - `poll_interval_ms` (integer, default: `10000`)
 - `download_when_done` (boolean, optional; defaults to `true` when waiting)
@@ -692,7 +692,7 @@ Download `.mp4` content for a completed operation and return file-first MCP `res
 
 Recommended workflow:
 
-1) Call `google-videos-generate` with `wait_for_completion=false` to get `operation_name`.
+1) Call `google-videos-generate` with `wait_for_completion=true` (default) to get the completed operation and downloads; set to false only if you need the operation id immediately.
 2) Poll `google-videos-retrieve-operation` until `done=true`.
 3) Call `google-videos-retrieve-content` to download an `.mp4` and receive a `resource_link` (or embedded `resource`).
 
