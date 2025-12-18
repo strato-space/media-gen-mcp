@@ -247,7 +247,7 @@ export const openaiImagesGenerateBaseSchema = z.object({
     "1536x1024",
     "1024x1536",
     "auto",
-  ]).optional().describe("Image dimensions (default: auto)."),
+  ]).default("1024x1536").describe("Image dimensions (default: 1024x1536)."),
   quality: z.enum(["low", "medium", "high", "auto"]).optional()
     .describe("Quality/detail (default: auto). 'high' for detailed images, 'low' for fast previews."),
   n: z.number().int().min(1).max(10).optional()
@@ -284,7 +284,7 @@ export const openaiImagesEditBaseSchema = z.object({
     "1536x1024",
     "1024x1536",
     "auto",
-  ]).optional().describe("Output dimensions (default: auto)."),
+  ]).default("1024x1536").describe("Output dimensions (default: 1024x1536)."),
   n: z.number().int().min(1).max(10).optional()
     .describe("Number of edits (1-10, default: 1)."),
   quality: z.enum(["low", "medium", "high", "auto"]).optional()

@@ -10,6 +10,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import https from "node:https";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
 
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -128,6 +129,21 @@ const isUrlAllowedByEnv = (url: string): boolean => isHttpUrl(url) && urlPrefixC
 // Helper: check if string is an HTTP(S) URL
 function isHttpUrl(val: string): boolean {
   return val.startsWith("http://") || val.startsWith("https://");
+}
+
+// Helper: allow file:// prefixed paths by normalizing them to filesystem paths
+function normalizeFilePathInput(filePath: string): string {
+  if (!filePath) return filePath;
+  const lower = filePath.toLowerCase();
+  if (lower.startsWith("file://")) {
+    try {
+      return fileURLToPath(filePath);
+    } catch {
+      const withoutScheme = filePath.replace(/^file:\/\//i, "");
+      return path.normalize(withoutScheme);
+    }
+  }
+  return filePath;
 }
 
 function maskSecret(value: string | undefined): string {
@@ -270,8 +286,9 @@ function getOpenAIClient(): OpenAI | AzureOpenAI {
 // Shared path validation
 function isAbsolutePath(val: string | undefined): boolean {
   if (!val) return true;
-  if (val.startsWith("/")) return true;
-  if (/^[a-zA-Z]:[/\\]/.test(val)) return true;
+  const normalized = normalizeFilePathInput(val);
+  if (path.isAbsolute(normalized)) return true;
+  if (/^[a-zA-Z]:[/\\]/.test(normalized)) return true;
   return false;
 }
 
@@ -317,8 +334,9 @@ function debugLogRawArgs(toolName: string, args: unknown): void {
 
 // Resolve a possibly relative path against the primary output directory
 function resolvePathInPrimaryRoot(filePath: string): string {
-  if (isAbsolutePath(filePath)) return filePath;
-  return path.resolve(primaryOutputDir, filePath);
+  const normalizedPath = normalizeFilePathInput(filePath);
+  if (isAbsolutePath(normalizedPath)) return normalizedPath;
+  return path.resolve(primaryOutputDir, normalizedPath);
 }
 
 // Shared tool annotations
@@ -430,7 +448,7 @@ type ImageGenerateParams = {
   output_compression?: number;
   output_format?: "png" | "jpeg" | "webp";
   quality?: "auto" | "high" | "medium" | "low";
-  size?: "1024x1024" | "1536x1024" | "1024x1536" | "auto";
+    size?: "1024x1024" | "1536x1024" | "1024x1536" | "auto";
   user?: string;
 };
 
@@ -1378,7 +1396,7 @@ function buildImageToolResult(
 		    output_compression: z.number().int().min(0).max(100).optional(),
 		    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
 		    quality: z.enum(["auto", "high", "medium", "low"]).default("high"),
-	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024"),
+	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1536"),
 	    user: z.string().optional(),
 	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
 	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
@@ -1517,7 +1535,7 @@ function buildImageToolResult(
 		    model: z.enum(["gpt-image-1.5", "gpt-image-1"]).default("gpt-image-1.5"),
 		    n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
 		    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low). Default: high."),
-		    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1024").describe("Size of the generated images. Default: 1024x1024."),
+	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1536").describe("Size of the generated images. Default: 1024x1536."),
 		    user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
 	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
 	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
