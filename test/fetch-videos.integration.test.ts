@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -127,5 +128,39 @@ describe("fetch-videos integration", () => {
     expect(uris.some((u) => u.endsWith(path.basename(second)))).toBe(true);
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("adds .mp4 when file base path contains dots", async () => {
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
+
+    const dummyMp4 = Buffer.from("00000018667479706D703432", "hex");
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "video/mp4" });
+      res.end(dummyMp4);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+    const url = `http://127.0.0.1:${port}/video`;
+
+    try {
+      const result = await callFetchVideos(
+        { sources: [url], file: "output.with.dots" },
+        {
+          MEDIA_GEN_DIRS: tmpDir,
+          MEDIA_GEN_MCP_URL_PREFIXES: "https://example.com/media",
+        },
+      );
+
+      const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ uri?: string; file?: string }> } };
+      expect(res.isError).not.toBe(true);
+
+      const first = res.structuredContent?.data?.[0];
+      expect(first?.uri ?? "").toContain("output.with.dots.mp4");
+      expect(first?.file ?? "").toContain("output.with.dots.mp4");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await fs.promises.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });

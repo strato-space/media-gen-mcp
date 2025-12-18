@@ -28,7 +28,7 @@ import { GoogleGenAI, PersonGeneration } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 let op = await ai.models.generateVideos({
-  model: "veo-2.0-generate-001",
+  model: "veo-3.1-generate-001",
   // Either pass top-level prompt/image/video:
   prompt,
   // ...or use the nested `source` object (also supported by the SDK):
@@ -82,7 +82,7 @@ Optional follow-ups:
   - Same source formats as `fetch-videos` / OpenAI tools: HTTP(S) URL or local file path under `MEDIA_GEN_DIRS`.
   - Mutually exclusive with `input_reference`.
 - `model` (string/enum, optional) — default to Veo 2; allow Veo 3:
-  - Recommended enum start: `"veo-2.0-generate-001" | "veo-3.0-generate-001"` (confirm exact IDs against Google docs / SDK).
+  - Recommended enum start: `"veo-3.1-generate-001"` (extend when new versions appear; confirm exact IDs against Google docs / SDK).
   - Alternative: accept any non-empty string + optional allowlist env var (safer for forward compatibility).
 
 **Config (Zod):** map to Google `GenerateVideosConfig` (SDK: `generateVideos({ config: ... })`):
@@ -101,7 +101,7 @@ Optional follow-up config coverage (SDK supports):
 - `wait_for_completion` (boolean, optional, default: `false`)
   - `false`: return operation metadata immediately; no download.
   - `true`: poll until done (or timeout) and optionally download.
-- `timeout_ms` (int, optional, default: `300000`) — max wait time when waiting.
+- `timeout_ms` (int, optional, default: `900000`) — max wait time when waiting.
 - `poll_interval_ms` (int, optional, default: `10000`) — polling interval (sample uses 10s).
 
 **Download options (Zod):**

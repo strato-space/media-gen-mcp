@@ -44,7 +44,7 @@ Per the OpenAI SDK types (`openai/resources/videos`):
 - `wait_for_completion` (boolean, optional, default: `false`)
   - `false`: return job metadata immediately; no download.
   - `true`: poll `client.videos.retrieve(id)` until `status` is `completed`/`failed` or timeout.
-- `timeout_ms` (int, optional, default: `300000`) — max time to wait when `wait_for_completion=true`.
+- `timeout_ms` (int, optional, default: `900000`) — max time to wait when `wait_for_completion=true`.
 - `poll_interval_ms` (int, optional, default: `2000`) — poll interval when waiting.
 
 **Download options (Zod):**
@@ -75,7 +75,7 @@ Per the OpenAI SDK types (`openai/resources/videos`):
 - `video_id` (string, required)
 - `prompt` (string, required) — updated text prompt that directs the remix.
 - `wait_for_completion` (boolean, optional, default: `false`) — same semantics as `openai-videos-create`.
-- `timeout_ms` (int, optional, default: `300000`) — same semantics as `openai-videos-create`.
+- `timeout_ms` (int, optional, default: `900000`) — same semantics as `openai-videos-create`.
 - `poll_interval_ms` (int, optional, default: `2000`) — same semantics as `openai-videos-create`.
 - `download_variants` (array enum, optional, default: `["video"]`) — same semantics as `openai-videos-create`.
 

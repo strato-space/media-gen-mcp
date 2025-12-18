@@ -4,7 +4,7 @@
 
 **media-gen-mcp** is a Model Context Protocol (MCP) server providing:
 
-- OpenAI Images tools (`gpt-image-1`) for image generation and edits/inpainting.
+- OpenAI Images tools (`gpt-image-1.5`, `gpt-image-1`) for image generation and edits/inpainting.
 - OpenAI Videos (Sora) job tooling (`sora-2`, `sora-2-pro`) for video generation and asset downloads.
 - Local/URL image fetching plus optional compression and video input preprocessing via `sharp`.
 
@@ -54,11 +54,11 @@ Most server logic lives in `src/index.ts` for simplicity and ease of review. `sr
 ### 2. Tool result format (MCP-first)
 Tools return MCP `CallToolResult` with:
 
-- `content[]` blocks (`text`, `image`, `resource_link`)
+- `content[]` blocks (`text`, `image`, `resource_link`, `resource`)
 - optional `structuredContent` for machine-readable OpenAI responses
 - `isError: true` with a single `text` block for failures
 
-For image/video tools, two parameters standardize output shapes:
+For image tools, two parameters standardize output shapes:
 
 - **`tool_result`** (`resource_link` | `image`, default: `resource_link`): Controls `content[]` shape
   - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
@@ -68,6 +68,14 @@ For image/video tools, two parameters standardize output shapes:
   - `structuredContent` always contains OpenAI ImagesResponse format
   - `url`: `data[].url` contains file URLs
   - `b64_json`: `data[].b64_json` contains base64 data
+
+For video download tools, `tool_result` controls `content[]` shape:
+
+- **`tool_result`** (`resource_link` | `resource`, default: `resource_link`)
+  - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
+  - `resource`: Emits `EmbeddedResource` blocks with base64 `resource.blob`
+
+For Google video tools, `response_format` controls `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
 
 Per MCP spec 5.2.6, a `TextContent` block with serialized JSON (URLs in `data[]`) is also included for backward compatibility.
 
@@ -182,18 +190,19 @@ npm run test         # Run vitest once
 npm run test:watch   # Watch mode
 ```
 
-**142 tests** across 7 files:
+**155 tests** across 8 files:
 - `compression.test.ts` (12) — image format detection, buffer processing, file I/O
 - `helpers.test.ts` (31) — URL/path validation, output resolution, result building
 - `env.test.ts` (19) — env parsing, glob handling, allowlist behavior
 - `logger.test.ts` (10) — log formatting and truncation safety
-- `schemas.test.ts` (64) — Zod validation for all tools, boundary tests
+- `schemas.test.ts` (69) — Zod validation for all tools, boundary tests
+- `pricing.test.ts` (8) — pricing estimates for videos and images
 - `fetch-images.integration.test.ts` (3) — end-to-end MCP tool call behavior
 - `fetch-videos.integration.test.ts` (3) — end-to-end MCP tool call behavior
 
 ### Manual Testing
 1. Use `test-images` with sample images to verify result placement
-2. Test `tool_result` (`resource_link` vs `image`) and `response_format` (`url` vs `b64_json`) with your target MCP client
+2. Test `tool_result` (images: `resource_link` vs `image`; videos: `resource_link` vs `resource`) and `response_format` (`url` vs `b64_json`) with your target MCP client
 3. Verify compression with large images (>800KB)
 4. For videos, validate `wait_for_completion` timeouts and `openai-videos-retrieve-content` outputs (video/thumbnail/spritesheet)
 
