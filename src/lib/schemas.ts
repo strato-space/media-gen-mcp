@@ -24,11 +24,21 @@ export const compressionSchema = z.object({
 const toolResultEnum = z.enum(["resource_link", "image"]);
 export type ToolResultType = z.infer<typeof toolResultEnum>;
 
+// Video tool_result schema: controls content[] shape for tools that may return
+// video data (MCP content blocks).
+// resource_link -> ResourceLink items in content[]
+// resource      -> EmbeddedResource items with BlobResourceContents in content[]
+const videoToolResultEnum = z.enum(["resource_link", "resource"]);
+export type VideoToolResultType = z.infer<typeof videoToolResultEnum>;
+
 // response_format schema: controls structuredContent shape (OpenAI Images API format)
 // url      -> data[].url in structuredContent
 // b64_json -> data[].b64_json in structuredContent
 const responseFormatEnum = z.enum(["url", "b64_json"]);
 export type ResponseFormatType = z.infer<typeof responseFormatEnum>;
+
+const openaiImageModelEnum = z.enum(["gpt-image-1.5", "gpt-image-1"]);
+export type OpenAIImageModelType = z.infer<typeof openaiImageModelEnum>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenAI Videos schemas
@@ -79,30 +89,36 @@ export const openaiVideosCreateSchema = z.object({
   size: videoSizeEnum.optional()
     .describe("Output resolution formatted as width x height (default: 720x1280)."),
 
-  wait_for_completion: z.boolean().default(false).optional()
-    .describe("If true, poll the job until completed/failed (then optionally download assets)."),
-  timeout_ms: z.number().int().min(1000).max(3600000).default(300000).optional()
-    .describe("Max time to wait for completion when wait_for_completion is true (default: 300000)."),
+  wait_for_completion: z.boolean().default(true).optional()
+    .describe("If true, poll the job until completed/failed (then optionally download assets). Default: true."),
+  timeout_ms: z.number().int().min(1000).max(3600000).default(900000).optional()
+    .describe("Max time to wait for completion when wait_for_completion is true (default: 900000)."),
   poll_interval_ms: z.number().int().min(250).max(60000).default(2000).optional()
     .describe("Polling interval when wait_for_completion is true (default: 2000)."),
 
   download_variants: z.array(videoVariantEnum).min(1).default(["video"]).optional()
     .describe("Which downloadable assets to fetch when completed (default: ['video'])."),
+
+  tool_result: videoToolResultEnum.default("resource_link").optional()
+    .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
 });
 
 export const openaiVideosRemixSchema = z.object({
   video_id: nonEmptyString.describe("Source video job id to remix."),
   prompt: z.string().max(32000).describe("Updated prompt that directs the remix (max 32K chars)."),
 
-  wait_for_completion: z.boolean().default(false).optional()
-    .describe("If true, poll the job until completed/failed (then optionally download assets)."),
-  timeout_ms: z.number().int().min(1000).max(3600000).default(300000).optional()
-    .describe("Max time to wait for completion when wait_for_completion is true (default: 300000)."),
+  wait_for_completion: z.boolean().default(true).optional()
+    .describe("If true, poll the job until completed/failed (then optionally download assets). Default: true."),
+  timeout_ms: z.number().int().min(1000).max(3600000).default(900000).optional()
+    .describe("Max time to wait for completion when wait_for_completion is true (default: 900000)."),
   poll_interval_ms: z.number().int().min(250).max(60000).default(2000).optional()
     .describe("Polling interval when wait_for_completion is true (default: 2000)."),
 
   download_variants: z.array(videoVariantEnum).min(1).default(["video"]).optional()
     .describe("Which downloadable assets to fetch when completed (default: ['video'])."),
+
+  tool_result: videoToolResultEnum.default("resource_link").optional()
+    .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
 });
 
 export const openaiVideosListSchema = z.object({
@@ -124,11 +140,104 @@ export const openaiVideosRetrieveContentSchema = z.object({
   video_id: nonEmptyString.describe("Video job id."),
   variant: videoVariantEnum.default("video").optional()
     .describe("Which downloadable asset to return (default: video)."),
+
+  tool_result: videoToolResultEnum.default("resource_link").optional()
+    .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Google Videos schemas
+// ─────────────────────────────────────────────────────────────────────────────
+
+const googleVideoAspectRatioEnum = z.enum(["16:9", "9:16"]);
+export type GoogleVideoAspectRatioType = z.infer<typeof googleVideoAspectRatioEnum>;
+
+const googlePersonGenerationEnum = z.enum(["DONT_ALLOW", "ALLOW_ADULT", "ALLOW_ALL"]);
+export type GooglePersonGenerationType = z.infer<typeof googlePersonGenerationEnum>;
+
+const imageMimeTypeSchema = z.string().regex(/^image\/[a-zA-Z0-9.+-]+$/, {
+  message: "Expected an image MIME type like image/jpeg",
+});
+
+export const googleVideosGenerateSchema = z.object({
+  prompt: z.string().max(32000).optional()
+    .describe("Text prompt that describes the video to generate (max 32K chars). Required unless an input image/video is provided."),
+  input_reference: nonEmptyString.optional()
+    .describe("Optional image reference (image-to-video): HTTP(S) URL, base64 / data URL, or file path under MEDIA_GEN_DIRS."),
+  input_reference_mime_type: imageMimeTypeSchema.optional()
+    .describe("Optional override for input image MIME type (e.g. image/jpeg). Useful when input_reference is raw base64 without a data URL header."),
+  input_video_reference: nonEmptyString.optional()
+    .describe("Optional input video reference (video extension): HTTP(S) URL or file path under MEDIA_GEN_DIRS. Mutually exclusive with input_reference."),
+
+  model: nonEmptyString.default("veo-3.1-generate-001").optional()
+    .describe("Google video model id (default: veo-3.1-generate-001)."),
+
+  number_of_videos: z.number().int().min(1).max(4).default(1).optional()
+    .describe("Number of videos to generate (default: 1)."),
+  aspect_ratio: googleVideoAspectRatioEnum.optional()
+    .describe("Aspect ratio for the generated video."),
+  duration_seconds: z.number().int().min(1).max(120).optional()
+    .describe("Video duration in seconds (provider/model-dependent)."),
+  person_generation: googlePersonGenerationEnum.optional()
+    .describe("Controls whether people are allowed in the generated video."),
+
+  wait_for_completion: z.boolean().default(true).optional()
+    .describe("If true, poll the operation until done (then optionally download). Default: true."),
+  timeout_ms: z.number().int().min(1000).max(3600000).default(900000).optional()
+    .describe("Max time to wait for completion when wait_for_completion is true (default: 900000)."),
+  poll_interval_ms: z.number().int().min(1000).max(60000).default(10000).optional()
+    .describe("Polling interval when wait_for_completion is true (default: 10000)."),
+
+  download_when_done: z.boolean().optional()
+    .describe("When waiting, whether to download generated videos to MEDIA_GEN_DIRS[0]. Defaults to true when wait_for_completion=true, otherwise false."),
+
+  tool_result: videoToolResultEnum.default("resource_link").optional()
+    .describe("Controls content[] shape when downloading: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
+  response_format: responseFormatEnum.default("url").optional()
+    .describe("Controls structuredContent video fields: 'url' (default) prefers video.uri, 'b64_json' prefers video.videoBytes."),
+}).superRefine((val, ctx) => {
+  const hasPrompt = typeof val.prompt === "string" && val.prompt.trim().length > 0;
+  const hasImage = typeof val.input_reference === "string" && val.input_reference.trim().length > 0;
+  const hasVideo = typeof val.input_video_reference === "string" && val.input_video_reference.trim().length > 0;
+
+  if (!hasPrompt && !hasImage && !hasVideo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide at least one of: prompt, input_reference, input_video_reference",
+      path: [],
+    });
+  }
+
+  if (hasImage && hasVideo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "input_reference and input_video_reference are mutually exclusive",
+      path: ["input_video_reference"],
+    });
+  }
+});
+
+export const googleVideosRetrieveOperationSchema = z.object({
+  operation_name: nonEmptyString.describe("Google video operation name/id."),
+  response_format: responseFormatEnum.default("url").optional()
+    .describe("Controls structuredContent video fields: 'url' (default) prefers video.uri, 'b64_json' prefers video.videoBytes."),
+});
+
+export const googleVideosRetrieveContentSchema = z.object({
+  operation_name: nonEmptyString.describe("Google video operation name/id."),
+  index: z.number().int().min(0).default(0).optional()
+    .describe("Which generatedVideos[index] to download (default: 0)."),
+  tool_result: videoToolResultEnum.default("resource_link").optional()
+    .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
+  response_format: responseFormatEnum.default("url").optional()
+    .describe("Controls structuredContent video fields: 'url' (default) prefers video.uri, 'b64_json' prefers video.videoBytes."),
 });
 
 // openai-images-generate base schema (shared params)
 export const openaiImagesGenerateBaseSchema = z.object({
   prompt: z.string().max(32000).describe("Text prompt describing the desired image (max 32K chars)."),
+  model: openaiImageModelEnum.default("gpt-image-1.5").optional()
+    .describe("OpenAI image model id (default: gpt-image-1.5)."),
   background: z.enum(["transparent", "opaque", "auto"]).optional()
     .describe("Background type (default: auto). Use 'transparent' for PNG with alpha channel."),
   moderation: z.enum(["low", "auto"]).optional()
@@ -138,7 +247,7 @@ export const openaiImagesGenerateBaseSchema = z.object({
     "1536x1024",
     "1024x1536",
     "auto",
-  ]).optional().describe("Image dimensions (default: auto)."),
+  ]).default("1024x1536").describe("Image dimensions (default: 1024x1536)."),
   quality: z.enum(["low", "medium", "high", "auto"]).optional()
     .describe("Quality/detail (default: auto). 'high' for detailed images, 'low' for fast previews."),
   n: z.number().int().min(1).max(10).optional()
@@ -168,12 +277,14 @@ export const openaiImagesEditBaseSchema = z.object({
   ]).describe("Base64 image(s), file path(s), or URL(s) to edit. Can be a single value or array of 1-16 items."),
   mask: z.string().optional()
     .describe("Base64 mask image or file path. White pixels are edited, black pixels preserved."),
+  model: openaiImageModelEnum.default("gpt-image-1.5").optional()
+    .describe("OpenAI image model id (default: gpt-image-1.5)."),
   size: z.enum([
     "1024x1024",
     "1536x1024",
     "1024x1536",
     "auto",
-  ]).optional().describe("Output dimensions (default: auto)."),
+  ]).default("1024x1536").describe("Output dimensions (default: 1024x1536)."),
   n: z.number().int().min(1).max(10).optional()
     .describe("Number of edits (1-10, default: 1)."),
   quality: z.enum(["low", "medium", "high", "auto"]).optional()
@@ -257,3 +368,7 @@ export type OpenAIVideosListArgs = z.input<typeof openaiVideosListSchema>;
 export type OpenAIVideosRetrieveArgs = z.input<typeof openaiVideosRetrieveSchema>;
 export type OpenAIVideosDeleteArgs = z.input<typeof openaiVideosDeleteSchema>;
 export type OpenAIVideosRetrieveContentArgs = z.input<typeof openaiVideosRetrieveContentSchema>;
+
+export type GoogleVideosGenerateArgs = z.input<typeof googleVideosGenerateSchema>;
+export type GoogleVideosRetrieveOperationArgs = z.input<typeof googleVideosRetrieveOperationSchema>;
+export type GoogleVideosRetrieveContentArgs = z.input<typeof googleVideosRetrieveContentSchema>;

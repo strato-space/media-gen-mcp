@@ -6,6 +6,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ImageData } from "./compression.js";
 
@@ -22,11 +23,27 @@ export function isHttpUrl(val: string): boolean {
   return val.startsWith("http://") || val.startsWith("https://");
 }
 
+// Helper: normalize file:// URLs to filesystem paths
+export function normalizeFilePathInput(filePath: string): string {
+  if (!filePath) return filePath;
+  const lower = filePath.toLowerCase();
+  if (lower.startsWith("file://")) {
+    try {
+      return fileURLToPath(filePath);
+    } catch {
+      const withoutScheme = filePath.replace(/^file:\/\//i, "");
+      return path.normalize(withoutScheme);
+    }
+  }
+  return filePath;
+}
+
 // Shared path validation
 export function isAbsolutePath(val: string | undefined): boolean {
   if (!val) return true;
-  if (val.startsWith("/")) return true;
-  if (/^[a-zA-Z]:[/\\]/.test(val)) return true;
+  const normalized = normalizeFilePathInput(val);
+  if (path.isAbsolute(normalized)) return true;
+  if (/^[a-zA-Z]:[/\\]/.test(normalized)) return true;
   return false;
 }
 
@@ -59,7 +76,8 @@ export async function ensureDirectoryWritable(filePath: string): Promise<void> {
 // Helper: validate output directory (file path or fallback)
 export async function validateOutputDirectory(file: string | undefined, outputDir?: string): Promise<void> {
   if (file) {
-    await ensureDirectoryWritable(file);
+    const normalized = normalizeFilePathInput(file);
+    await ensureDirectoryWritable(normalized);
   } else {
     const tmpDir = outputDir || "/tmp";
     await ensureDirectoryWritable(path.join(tmpDir, "test"));
@@ -117,7 +135,7 @@ export function resolveOutputPath(
   }
 
   // Always generate a file path (we write files even for base64 output)
-  let effectiveFileOutput = file;
+  let effectiveFileOutput = file ? normalizeFilePathInput(file) : undefined;
   if (!effectiveFileOutput) {
     const tmpDir = options?.outputDir ?? "/tmp";
     const unique = crypto.randomUUID();
@@ -158,7 +176,8 @@ export function buildResourceLinks(
   urlPrefix?: string,
 ): ProcessedImagesResult {
   const urls: string[] = [];
-  const resourceLinks: ResourceLinkItem[] = files.map((file) => {
+  const normalizedFiles = files.map((file) => normalizeFilePathInput(file));
+  const resourceLinks: ResourceLinkItem[] = normalizedFiles.map((file) => {
     if (urlPrefix) {
       const url = `${urlPrefix}/${path.basename(file)}`;
       urls.push(url);
@@ -171,5 +190,5 @@ export function buildResourceLinks(
     };
   });
 
-  return { files, urls, resourceLinks };
+  return { files: normalizedFiles, urls, resourceLinks };
 }

@@ -5,16 +5,17 @@ This document outlines the minimal steps required to add support for DALL·E mod
 ## 1. Model options
 
 - **Extend schemas** for both image tools (`openai-images-generate` and `openai-images-edit`):
-  - Today, as documented in README, `model` is a literal `"gpt-image-1"` with default `"gpt-image-1"` for both tools.
+  - Today, as documented in README, `model` supports `"gpt-image-1.5"` (default) and `"gpt-image-1"` for both tools.
   - Plan: allow `model` to be one of:
+    - `"gpt-image-1.5"`
     - `"gpt-image-1"`
     - `"dall-e-2"`
     - `"dall-e-3"` (generate only, at first).
-  - Keep `gpt-image-1` as the default, preserving current behavior when `model` is omitted.
+  - Keep `gpt-image-1.5` as the default, preserving current behavior when `model` is omitted.
 
 ## 2. openai-images-generate: model-specific params
 
-- **gpt-image-1** (current behavior):
+- **gpt-image-1.5 / gpt-image-1** (current behavior):
   - Keep `background`, `moderation`, `output_format`, `output_compression`, `quality`, `size`, `user`.
 - **dall-e-2**:
   - Supported:
@@ -33,7 +34,7 @@ This document outlines the minimal steps required to add support for DALL·E mod
 
 ## 3. edit-image: model-specific behavior
 
-- **gpt-image-1** (current behavior, see README "openai-images-edit"):
+- **gpt-image-1.5 / gpt-image-1** (current behavior, see README "openai-images-edit"):
   - `image: string | string[]` (1–16), `mask` optional, `n`, `quality`, `size`, `user`.
 - **dall-e-2**:
   - Only **one** `image` is allowed.
@@ -52,7 +53,7 @@ This document outlines the minimal steps required to add support for DALL·E mod
 
 - Reuse existing logic documented in README for `openai-images-generate` / `openai-images-edit`:
   - Expect `b64_json` in `result.data[].b64_json` for all models when `response_format === "b64_json"`.
-  - For base64 mode: return `content` with `image` items and optional `text` items containing revised prompts (`revised_prompt`), exactly as for `gpt-image-1` today.
+  - For base64 mode: return `content` with `image` items and optional `text` items containing revised prompts (`revised_prompt`), exactly as for GPT Image tools today.
   - For file mode: write images to disk and return `resource_link` items in `content`; `structuredContent` remains an OpenAI ImagesResponse-style object with `created` and `data[]` entries where each entry contains either `b64_json` (base64 mode) or `url` (file/URL mode), as described in README.
 - For DALL·E models:
   - Default `mimeType` to `image/png`.
@@ -71,7 +72,7 @@ This document outlines the minimal steps required to add support for DALL·E mod
 ## 6. README updates
 
 - Document supported models per tool, using the actual tool names:
-  - `openai-images-generate`: `gpt-image-1`, `dall-e-2`, `dall-e-3 (generate only)`.
-  - `openai-images-edit`: `gpt-image-1`, `dall-e-2`.
+  - `openai-images-generate`: `gpt-image-1.5`, `gpt-image-1`, `dall-e-2`, `dall-e-3 (generate only)`.
+  - `openai-images-edit`: `gpt-image-1.5`, `gpt-image-1`, `dall-e-2`.
 - Describe model-specific options and limitations (sizes, qualities, style, edit constraints) in the tool signatures sections.
 - Clarify that DALL·E support is experimental if desired.

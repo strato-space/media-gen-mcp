@@ -49,6 +49,16 @@ describe("helpers module", () => {
       expect(isAbsolutePath("D:\\Documents\\file.txt")).toBe(true);
     });
 
+    it("returns true for file URLs", () => {
+      expect(isAbsolutePath("file:///tmp/image.png")).toBe(true);
+      expect(isAbsolutePath("file://localhost/tmp/image.png")).toBe(true);
+    });
+
+    it("returns false for relative file URLs", () => {
+      expect(isAbsolutePath("file://image.png")).toBe(false);
+      expect(isAbsolutePath("file://./nested/image.png")).toBe(false);
+    });
+
     it("returns false for relative paths", () => {
       expect(isAbsolutePath("./image.png")).toBe(false);
       expect(isAbsolutePath("../file.txt")).toBe(false);
@@ -185,6 +195,11 @@ describe("helpers module", () => {
       expect(result.effectiveFileOutput).toBe("/custom/path.png");
     });
 
+    it("normalizes file URLs when provided", () => {
+      const result = resolveOutputPath(mockImages, "url", "file:///tmp/custom.png", "test");
+      expect(result.effectiveFileOutput).toBe("/tmp/custom.png");
+    });
+
     it("generates file path when not provided", () => {
       const result = resolveOutputPath(mockImages, "url", undefined, "create", {
         outputDir: "/tmp",
@@ -220,6 +235,19 @@ describe("helpers module", () => {
       const result = buildResourceLinks(files);
 
       expect(result.urls).toEqual([]);
+    });
+
+    it("normalizes file:// inputs", () => {
+      const files = ["file:///tmp/image1.png"];
+      const result = buildResourceLinks(files);
+
+      expect(result.files).toEqual(["/tmp/image1.png"]);
+      expect(result.resourceLinks[0]).toEqual({
+        type: "resource_link",
+        uri: "file:///tmp/image1.png",
+        name: "image1.png",
+        mimeType: "image/png",
+      });
     });
   });
 });

@@ -33,7 +33,7 @@ const LOG_SANITIZE_IMAGES = (() => {
 
 const LOG_TRUNCATE_DATA_MAX = 64;
 
-const DEFAULT_LOG_SANITIZE_KEYS: string[] = ["image_url", "b64_json", "base64", "data"];
+const DEFAULT_LOG_SANITIZE_KEYS: string[] = ["image_url", "b64_json", "base64", "data", "imageBytes", "videoBytes", "blob"];
 
 // Keys in structured log data that should be truncated to LOG_TRUNCATE_DATA_MAX
 // when sanitization is enabled. Can be overridden via

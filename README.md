@@ -13,13 +13,14 @@
 
 ---
 
-**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1`) and OpenAI Videos (Sora): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
+**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1.5`, `gpt-image-1`), OpenAI Videos (Sora), and Google GenAI Videos (Veo): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
 
 **Design principle:** spec-first, type-safe image tooling – strict OpenAI Images API + MCP compliance with fully static TypeScript types and flexible result placements/response formats for different clients.
 
-- **Generate images** from text prompts using OpenAI's `gpt-image-1` model (with DALL·E support planned in future versions).
+- **Generate images** from text prompts using OpenAI's `gpt-image-1.5` model (with `gpt-image-1` compatibility and DALL·E support planned in future versions).
 - **Edit images** (inpainting, outpainting, compositing) from 1 up to 16 images at once, with advanced prompt control.
 - **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
+- **Generate videos** via Google GenAI (Veo) with operation polling and file-first downloads.
 - **Fetch & compress images** from HTTP(S) URLs or local file paths with smart size/quality optimization.
 - **Debug MCP output shapes** with a `test-images` tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
 - **Integrates with**: [fast-agent](https://github.com/strato-space/fast-agent), [Windsurf](https://windsurf.com), [Claude Desktop](https://www.anthropic.com/claude/desktop), [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com/), and any MCP-compatible client.
@@ -30,11 +31,11 @@
 
 - **Strict MCP spec support**  
   Tool outputs are first-class [`CallToolResult`](https://github.com/modelcontextprotocol/spec/blob/main/schema/2025-11-25/schema.json) objects from the latest MCP schema, including:
-  `content` items (`text`, `image`, `resource_link`), optional `structuredContent`, optional top-level `files`, and the `isError` flag for failures.
+  `content` items (`text`, `image`, `resource_link`, `resource`), optional `structuredContent`, optional top-level `files`, and the `isError` flag for failures.
 
-- **Full gpt-image-1 and sora-2/sora-2-pro parameters coverage (generate & edit)**  
-  - `openai-images-generate` mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1` (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
-  - `openai-images-edit` mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1` (image, mask, `n`, quality, size, `user`).
+- **Full gpt-image-1.5 and sora-2/sora-2-pro parameters coverage (generate & edit)**  
+  - `openai-images-generate` mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1.5` (and `gpt-image-1`) (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
+  - `openai-images-edit` mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1.5` (and `gpt-image-1`) (image, mask, `n`, quality, size, `user`).
 
 - **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / content)**  
   - `openai-videos-create` mirrors [`videos/create`](https://platform.openai.com/docs/api-reference/videos/create) and can optionally wait for completion.
@@ -42,23 +43,28 @@
   - `openai-videos-list` mirrors [`videos/list`](https://platform.openai.com/docs/api-reference/videos/list).
   - `openai-videos-retrieve` mirrors [`videos/retrieve`](https://platform.openai.com/docs/api-reference/videos/retrieve).
   - `openai-videos-delete` mirrors [`videos/delete`](https://platform.openai.com/docs/api-reference/videos/delete).
-  - `openai-videos-retrieve-content` mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
+  - `openai-videos-retrieve-content` mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
+
+- **Google GenAI (Veo) operations + downloads (generate / retrieve operation / retrieve content)**  
+  - `google-videos-generate` starts a long-running operation (`ai.models.generateVideos`) and can optionally wait for completion and download `.mp4` outputs.
+  - `google-videos-retrieve-operation` polls an existing operation.
+  - `google-videos-retrieve-content` downloads an `.mp4` from a completed operation, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Fetch and process images from URLs or files**  
   `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
 
 - **Fetch videos from URLs or files**  
-  `fetch-videos` tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` items (file:// or https:// via `MEDIA_GEN_MCP_URL_PREFIXES`).
+  `fetch-videos` tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Mix and edit up to 16 images**  
-  `openai-images-edit` accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for `gpt-image-1` image edits.
+  `openai-images-edit` accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for GPT Image models (`gpt-image-1.5`, `gpt-image-1`) image edits.
 
 - **Smart image compression**  
   Built-in compression using [sharp](https://sharp.pixelplumbing.com/) — iteratively reduces quality and dimensions to fit MCP payload limits while maintaining visual quality.
 
 - **Resource-aware file output with `resource_link`**  
   - Automatic switch from inline base64 to `file` when the total response size exceeds a safe threshold.
-  - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients as `resource_link` or `image` items in `content[]` depending on `tool_result`, with OpenAI ImagesResponse format in `structuredContent`.
+  - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients via `content[]` depending on `tool_result` (`resource_link`/`image` for images, `resource_link`/`resource` for video downloads).
 
 - **Built-in test-images tool for MCP client debugging**  
   `test-images` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
@@ -114,9 +120,10 @@ The project uses [vitest](https://vitest.dev/) for unit testing. Tests are locat
 | `helpers` | 31 | URL/path validation, output resolution, result placement, resource links |
 | `env` | 19 | Configuration parsing, env validation, defaults |
 | `logger` | 10 | Structured logging + truncation safety |
-| `schemas` | 64 | Zod schema validation for all tools, type inference |
-| `fetch-images` (integration) | 2 | End-to-end MCP tool call behavior |
-| `fetch-videos` (integration) | 2 | End-to-end MCP tool call behavior |
+| `pricing` | 5 | Sora pricing estimate helpers |
+| `schemas` | 69 | Zod schema validation for all tools, type inference |
+| `fetch-images` (integration) | 3 | End-to-end MCP tool call behavior |
+| `fetch-videos` (integration) | 3 | End-to-end MCP tool call behavior |
 
 **Test categories:**
 
@@ -132,10 +139,11 @@ npm run test
 # ✓ test/helpers.test.ts (31 tests)
 # ✓ test/env.test.ts (19 tests)
 # ✓ test/logger.test.ts (10 tests)
-# ✓ test/schemas.test.ts (64 tests)
-# ✓ test/fetch-images.integration.test.ts (2 tests)
-# ✓ test/fetch-videos.integration.test.ts (2 tests)
-# Tests: 140 passed
+# ✓ test/pricing.test.ts (5 tests)
+# ✓ test/schemas.test.ts (69 tests)
+# ✓ test/fetch-images.integration.test.ts (3 tests)
+# ✓ test/fetch-videos.integration.test.ts (3 tests)
+# Tests: 152 passed
 ```
 
 ### Run directly via npx (no local clone)
@@ -147,6 +155,25 @@ npx -y github:strato-space/media-gen-mcp --env-file /path/to/media-gen.env
 ```
 
 The `--env-file` argument tells the server which env file to load (e.g. when you keep secrets outside the cloned directory). The file should contain `OPENAI_API_KEY`, optional Azure variables, and any `MEDIA_GEN_MCP_*` settings.
+
+### `secrets.yaml` (optional)
+
+You can keep API keys (and optional Google Vertex AI settings) in a `secrets.yaml` file (compatible with the fast-agent secrets template):
+
+```yaml
+openai:
+  api_key: <your-api-key-here>
+anthropic:
+  api_key: <your-api-key-here>
+google:
+  api_key: <your-api-key-here>
+  vertex_ai:
+    enabled: true
+    project_id: your-gcp-project-id
+    location: europe-west4
+```
+
+`media-gen-mcp` loads `secrets.yaml` from the current working directory (or from `--secrets-file /path/to/secrets.yaml`) and applies it to env vars; values in `secrets.yaml` override env, and `<your-api-key-here>` placeholders are ignored.
 
 ---
 
@@ -288,21 +315,37 @@ MEDIA_GEN_DIRS=/home/*/media-gen/output/,/data/**/images/
 
 ### Tool Result Parameters: `tool_result` and `response_format`
 
-All image tools support two parameters that control the shape of the MCP tool result:
+Image tools (`openai-images-*`, `fetch-images`, `test-images`) support two parameters that control the shape of the MCP tool result:
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
 | `tool_result` | `resource_link`, `image` | `resource_link` | Controls `content[]` shape |
 | `response_format` | `url`, `b64_json` | `url` | Controls `structuredContent` shape (OpenAI ImagesResponse format) |
 
+Video download tools (`openai-videos-create` / `openai-videos-remix` when downloading, `openai-videos-retrieve-content`, `google-videos-generate` when downloading, `google-videos-retrieve-content`, `fetch-videos`) support:
+
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `tool_result` | `resource_link`, `resource` | `resource_link` | Controls `content[]` shape |
+
+Google video tools (`google-videos-*`) also support:
+
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `response_format` | `url`, `b64_json` | `url` | Controls `structuredContent.response.generatedVideos[].video` shape (`uri` vs `videoBytes`) |
+
 #### `tool_result` — controls `content[]`
 
-- **`resource_link`** (default): Emits `ResourceLink` items with `file://` or `https://` URIs
-- **`image`**: Emits base64 `ImageContent` blocks
+- **Images** (`openai-images-*`, `fetch-images`, `test-images`)
+  - **`resource_link`** (default): Emits `ResourceLink` items with `file://` or `https://` URIs
+  - **`image`**: Emits base64 `ImageContent` blocks
+- **Videos** (tools that download video data)
+  - **`resource_link`** (default): Emits `ResourceLink` items with `file://` or `https://` URIs
+  - **`resource`**: Emits `EmbeddedResource` blocks with base64 `resource.blob`
 
 #### `response_format` — controls `structuredContent`
 
-`structuredContent` always contains an OpenAI ImagesResponse-style object:
+For OpenAI images, `structuredContent` always contains an OpenAI ImagesResponse-style object:
 
 ```jsonc
 {
@@ -315,6 +358,11 @@ All image tools support two parameters that control the shape of the MCP tool re
 
 - **`url`** (default): `data[].url` contains file URLs
 - **`b64_json`**: `data[].b64_json` contains base64-encoded image data
+
+For Google videos, `response_format` controls whether `structuredContent.response.generatedVideos[].video` prefers:
+
+- **`url`** (default): `video.uri` (and strips `video.videoBytes`)
+- **`b64_json`**: `video.videoBytes` (and strips `video.uri`)
 
 #### Backward Compatibility (MCP 5.2.6)
 
@@ -370,7 +418,7 @@ Arguments (input schema):
 - `background` ("transparent" | "opaque" | "auto", optional)
   - Background handling mode.
   - If `background` is `"transparent"`, then `output_format` must be `"png"` or `"webp"`.
-- `model` (literal "gpt-image-1", optional, default: "gpt-image-1")
+- `model` ("gpt-image-1.5" | "gpt-image-1", optional, default: "gpt-image-1.5")
 - `moderation` ("auto" | "low", optional)
   - Content moderation behavior, passed through to the Images API.
 - `n` (integer, optional)
@@ -383,21 +431,21 @@ Arguments (input schema):
   - Output image format.
   - If omitted, the server treats output as PNG semantics.
 - `quality` ("auto" | "high" | "medium" | "low", default: "high")
-- `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1024")
+- `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1536")
 - `user` (string, optional)
   - User identifier forwarded to OpenAI for monitoring.
 - `response_format` ("url" | "b64_json", default: "url")
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
-- `tool_result` ("resource_link" | "image", default: "resource_link")
-  - Controls `content[]` shape:
-    - `"resource_link"` emits ResourceLink items (file/URL-based)
-    - `"image"` emits base64 ImageContent blocks
+  - `tool_result` ("resource_link" | "image", default: "resource_link")
+    - Controls `content[]` shape:
+      - `"resource_link"` emits ResourceLink items (file/URL-based)
+      - `"image"` emits base64 ImageContent blocks
 
 Behavior notes:
 
-- The server always uses OpenAI `gpt-image-1` under the hood.
+- The server uses OpenAI `gpt-image-1.5` by default (set `model: "gpt-image-1"` for legacy behavior).
 - If the total size of all base64 images would exceed the configured payload
   threshold (default ~50MB via `MCP_MAX_CONTENT_BYTES`), the server
   automatically switches the **effective output mode** to file/URL-based and saves
@@ -418,6 +466,7 @@ Output (MCP CallToolResult, when placement includes `"content"`):
 - When the effective `output` mode is `"file"`:
   - `content` contains one `resource_link` item per file, plus the same optional `text` items with revised prompts:
     - `{ type: "resource_link", uri: "file:///absolute-path-1.png", name: "absolute-path-1.png", mimeType: <image mime> }`
+  - For `gpt-image-1.5` and `gpt-image-1`, an additional `text` line is included with a pricing estimate (based on `structuredContent.usage`), and `structuredContent.pricing` contains the full pricing breakdown.
 
 When `result_placement` includes `"api"`, `openai-images-generate` instead returns an **OpenAI Images API-like object** without MCP wrappers:
 
@@ -450,12 +499,12 @@ Arguments (input schema):
 - `mask` (string, optional)
   - Absolute path, base64 string, or HTTP(S) URL for a mask image (PNG < 4MB, same dimensions
     as the source image). Transparent areas mark regions to edit.
-- `model` (literal "gpt-image-1", optional, default: "gpt-image-1")
+- `model` ("gpt-image-1.5" | "gpt-image-1", optional, default: "gpt-image-1.5")
 - `n` (integer, optional)
   - Number of images to generate.
   - Min: 1, Max: 10.
 - `quality` ("auto" | "high" | "medium" | "low", default: "high")
-- `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1024")
+- `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1536")
 - `user` (string, optional)
   - User identifier forwarded to OpenAI for monitoring.
 - `response_format` ("url" | "b64_json", default: "url")
@@ -485,6 +534,7 @@ Output (MCP CallToolResult):
 - When the effective `output` mode is `"file"`:
   - `content` contains one `resource_link` item per file, plus the same optional `text` items with revised prompts:
     - `{ type: "resource_link", uri: "file:///absolute-path-1.png", name: "absolute-path-1.png", mimeType: "image/png" }`
+  - For `gpt-image-1.5` and `gpt-image-1`, an additional `text` line is included with a pricing estimate (based on `structuredContent.usage`), and `structuredContent.pricing` contains the full pricing breakdown.
 
 When `result_placement` includes `"api"`, `openai-images-edit` follows the **same raw API format** as `openai-images-generate` (top-level `created`, `data[]`, `background`, `output_format`, `size`, `quality` with `b64_json` for base64 output or `url` for file output).
 
@@ -514,17 +564,22 @@ Arguments (input schema):
 - `model` ("sora-2" | "sora-2-pro", default: "sora-2")
 - `seconds` ("4" | "8" | "12", optional)
 - `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
-- `wait_for_completion` (boolean, default: false)
+- `wait_for_completion` (boolean, default: true)
   - When true, the server polls `openai-videos-retrieve` until `completed` or `failed` (or timeout), then downloads assets.
-- `timeout_ms` (integer, default: 300000)
+- `timeout_ms` (integer, default: 900000)
 - `poll_interval_ms` (integer, default: 2000)
 - `download_variants` (string[], default: ["video"])
   - Allowed values: `"video" | "thumbnail" | "spritesheet"`.
+- `tool_result` (`"resource_link"` | `"resource"`, default: `"resource_link"`)
+  - Controls `content[]` shape for downloaded assets:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"resource"` emits EmbeddedResource blocks with base64 `resource.blob`
 
 Output (MCP CallToolResult):
 
 - `structuredContent`: OpenAI `Video` object (job metadata; final state when `wait_for_completion=true`).
-- `content`: includes `resource_link` items for downloaded assets (when requested) and text blocks with JSON.
+- `content`: includes `resource_link` (default) or embedded `resource` blocks for downloaded assets (when requested) and text blocks with JSON.
+  - Includes a summary JSON block: `{ "video_id": "...", "pricing": { "currency": "USD", "model": "...", "size": "...", "seconds": 4, "price": 0.1, "cost": 0.4 } | null }` (and when waiting: `{ "video_id": "...", "assets": [...], "pricing": ... }`).
 
 ### openai-videos-remix
 
@@ -534,7 +589,7 @@ Arguments (input schema):
 
 - `video_id` (string, required)
 - `prompt` (string, required)
-- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants` — same semantics as `openai-videos-create`.
+- `wait_for_completion`, `timeout_ms`, `poll_interval_ms`, `download_variants`, `tool_result` — same semantics as `openai-videos-create` (default wait is true).
 
 ### openai-videos-list
 
@@ -565,12 +620,81 @@ Delete a video job (`videos.delete`).
 
 ### openai-videos-retrieve-content
 
-Retrieve an asset for a completed job (`videos.downloadContent`, REST `GET /videos/{video_id}/content`), write it under allowed `MEDIA_GEN_DIRS`, and return an MCP `resource_link`.
+Retrieve an asset for a completed job (`videos.downloadContent`, REST `GET /videos/{video_id}/content`), write it under allowed `MEDIA_GEN_DIRS`, and return MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 Arguments (input schema):
 
 - `video_id` (string, required)
 - `variant` ("video" | "thumbnail" | "spritesheet", default: "video")
+- `tool_result` (`"resource_link"` | `"resource"`, default: `"resource_link"`)
+
+Output (MCP CallToolResult):
+
+- `structuredContent`: OpenAI `Video` object.
+- `content`: a `resource_link` (or embedded `resource`), a summary JSON block `{ video_id, variant, uri, pricing }`, plus the full video JSON.
+
+### google-videos-generate
+
+Create a Google video generation operation using the Google GenAI SDK (`@google/genai`) `ai.models.generateVideos`.
+
+Arguments (input schema):
+
+- `prompt` (string, optional)
+- `input_reference` (string, optional) — image-to-video input (HTTP(S) URL, base64/data URL, or file path under `MEDIA_GEN_DIRS`)
+- `input_reference_mime_type` (string, optional) — override for `input_reference` MIME type (must be `image/*`)
+- `input_video_reference` (string, optional) — video-extension input (HTTP(S) URL or file path under `MEDIA_GEN_DIRS`; mutually exclusive with `input_reference`)
+- `model` (string, default: `"veo-3.1-generate-001"`)
+- `number_of_videos` (integer, default: `1`)
+- `aspect_ratio` (`"16:9" | "9:16"`, optional)
+- `duration_seconds` (integer, optional)
+- `person_generation` (`"DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL"`, optional)
+- `wait_for_completion` (boolean, default: `true`)
+- `timeout_ms` (integer, default: `900000`)
+- `poll_interval_ms` (integer, default: `10000`)
+- `download_when_done` (boolean, optional; defaults to `true` when waiting)
+- `tool_result` (`"resource_link"` | `"resource"`, default: `"resource_link"`)
+  - Controls `content[]` shape when downloading generated videos.
+- `response_format` (`"url"` | `"b64_json"`, default: `"url"`)
+  - Controls `structuredContent.response.generatedVideos[].video` fields:
+    - `"url"` prefers `video.uri` (and strips `video.videoBytes`)
+    - `"b64_json"` prefers `video.videoBytes` (and strips `video.uri`)
+
+Requirements:
+
+- Gemini Developer API: set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), or `google.api_key` in `secrets.yaml`.
+- Vertex AI: set `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION` (or `google.vertex_ai.*` in `secrets.yaml`).
+
+Output:
+
+- `structuredContent`: Google operation object (includes `name`, `done`, and `response.generatedVideos[]` when available).
+- `content`: status text, optional `.mp4` `resource_link` (default) or embedded `resource` blocks (when downloaded), plus JSON text blocks for compatibility.
+
+### google-videos-retrieve-operation
+
+Retrieve/poll an existing Google video operation (`ai.operations.getVideosOperation`).
+
+- `operation_name` (string, required)
+- `response_format` (`"url"` | `"b64_json"`, default: `"url"`)
+
+Output:
+
+- `structuredContent`: Google operation object.
+- `content`: JSON text blocks with a short summary + the full operation.
+
+### google-videos-retrieve-content
+
+Download `.mp4` content for a completed operation and return file-first MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
+
+- `operation_name` (string, required)
+- `index` (integer, default: `0`) — selects `response.generatedVideos[index]`
+- `tool_result` (`"resource_link"` | `"resource"`, default: `"resource_link"`)
+- `response_format` (`"url"` | `"b64_json"`, default: `"url"`)
+
+Recommended workflow:
+
+1) Call `google-videos-generate` with `wait_for_completion=true` (default) to get the completed operation and downloads; set to false only if you need the operation id immediately.
+2) Poll `google-videos-retrieve-operation` until `done=true`.
+3) Call `google-videos-retrieve-content` to download an `.mp4` and receive a `resource_link` (or embedded `resource`).
 
 ### fetch-images
 
@@ -635,12 +759,16 @@ Arguments (input schema):
   - When set, returns the last N video files from the primary `MEDIA_GEN_DIRS[0]` directory.
   - Files are sorted by modification time (most recently modified first).
   - Mutually exclusive with `sources` and `ids`.
+- `tool_result` (`"resource_link"` | `"resource"`, default: `"resource_link"`)
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"resource"` emits EmbeddedResource blocks with base64 `resource.blob`
 - `file` (string, optional)
   - Base path for output files (used when downloading from URLs). If multiple videos are downloaded, an index suffix is added.
 
 Output:
 
-- `content`: one `resource_link` per resolved video, plus an optional error summary text block.
+- `content`: one `resource_link` (default) or embedded `resource` block per resolved video, plus an optional error summary text block.
 - `structuredContent`: `{ data: [{ source, uri, file, mimeType, name, downloaded }], errors?: string[] }`.
 
 Behavior notes:
@@ -863,7 +991,7 @@ specifications**:
 
 - **OpenAI Images API alignment** – The arguments for `openai-images-generate`
   and `openai-images-edit` mirror
-  [`images.create` / `gpt-image-1`](https://platform.openai.com/docs/api-reference/images/create):
+  [`images.create` / `gpt-image-1.5`](https://platform.openai.com/docs/api-reference/images/create):
   `prompt`, `n`, `size`, `quality`, `background`, `output_format`,
   `output_compression`, `user`, plus `response_format` (`url` / `b64_json`) with
   the same semantics as the OpenAI Images API.
@@ -914,7 +1042,7 @@ In short, this library:
   - `result_placement = api`
   - `response_format = url`
 
-  In this mode the tool result matches the `images.create` / `gpt-image-1`
+  In this mode the tool result matches the `images.create` / `gpt-image-1.5`
   format (including `data[].url`), which simplifies consumption from backends
   and libraries that expect the OpenAI schema.
 
@@ -974,7 +1102,7 @@ Both `openai-images-generate` and `openai-images-edit` now attach `files` + `url
 
 - **OpenAI Images**
   - [Images API overview](https://platform.openai.com/docs/api-reference/images)
-  - [Images generate (gpt-image-1)](https://platform.openai.com/docs/api-reference/images/create)
+  - [Images generate (gpt-image-1.5)](https://platform.openai.com/docs/api-reference/images/create)
   - [Images edit (`createEdit`)](https://platform.openai.com/docs/api-reference/images/createEdit)
   - [Tools guide: image generation & revised_prompt](https://platform.openai.com/docs/guides/tools-image-generation)
 

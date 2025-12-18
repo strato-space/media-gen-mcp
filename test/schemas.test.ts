@@ -8,6 +8,9 @@ import {
   openaiVideosRetrieveSchema,
   openaiVideosDeleteSchema,
   openaiVideosRetrieveContentSchema,
+  googleVideosGenerateSchema,
+  googleVideosRetrieveOperationSchema,
+  googleVideosRetrieveContentSchema,
   fetchImagesSchema,
   fetchImagesClientSchema,
   testImagesSchema,
@@ -15,6 +18,7 @@ import {
   type OpenAIImagesGenerateArgs,
   type OpenAIImagesEditArgs,
   type OpenAIVideosCreateArgs,
+  type GoogleVideosGenerateArgs,
   type FetchImagesArgs,
   type FetchImagesClientArgs,
   type TestImagesArgs,
@@ -29,6 +33,7 @@ describe("schemas module", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.prompt).toBe("A cute cat");
+        expect(result.data.model).toBe("gpt-image-1.5"); // default
         expect(result.data.response_format).toBe("url"); // default
       }
     });
@@ -113,6 +118,9 @@ describe("schemas module", () => {
       const result = openaiImagesEditSchema.safeParse(input);
 
       expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.model).toBe("gpt-image-1.5"); // default
+      }
     });
 
     it("validates array of images (1-16)", () => {
@@ -193,11 +201,17 @@ describe("schemas module", () => {
         expect(result.data.model).toBe("sora-2");
         expect(result.data.input_reference_fit).toBe("contain");
         expect(result.data.input_reference_background).toBe("blur");
-        expect(result.data.wait_for_completion).toBe(false);
-        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.wait_for_completion).toBe(true);
+        expect(result.data.timeout_ms).toBe(900000);
         expect(result.data.poll_interval_ms).toBe(2000);
         expect(result.data.download_variants).toEqual(["video"]);
+        expect(result.data.tool_result).toBe("resource_link");
       }
+    });
+
+    it("validates tool_result options", () => {
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", tool_result: "resource_link" }).success).toBe(true);
+      expect(openaiVideosCreateSchema.safeParse({ prompt: "test", tool_result: "resource" }).success).toBe(true);
     });
 
     it("rejects invalid model", () => {
@@ -237,15 +251,81 @@ describe("schemas module", () => {
     });
   });
 
+  describe("googleVideosGenerateSchema (google-videos-generate)", () => {
+    it("validates minimal valid input and applies defaults", () => {
+      const input: GoogleVideosGenerateArgs = { prompt: "A cinematic sunset over mountains" };
+      const result = googleVideosGenerateSchema.safeParse(input);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.model).toBe("veo-3.1-generate-001");
+        expect(result.data.number_of_videos).toBe(1);
+        expect(result.data.wait_for_completion).toBe(true);
+        expect(result.data.timeout_ms).toBe(900000);
+        expect(result.data.poll_interval_ms).toBe(10000);
+        expect(result.data.tool_result).toBe("resource_link");
+        expect(result.data.response_format).toBe("url");
+      }
+    });
+
+    it("rejects input without prompt or media", () => {
+      const result = googleVideosGenerateSchema.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects both input_reference and input_video_reference", () => {
+      const result = googleVideosGenerateSchema.safeParse({
+        prompt: "test",
+        input_reference: "/tmp/image.jpg",
+        input_video_reference: "/tmp/video.mp4",
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe("googleVideosRetrieveOperationSchema (google-videos-retrieve-operation)", () => {
+    it("validates required operation_name", () => {
+      const result = googleVideosRetrieveOperationSchema.safeParse({ operation_name: "operations/123" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.response_format).toBe("url");
+      }
+      expect(googleVideosRetrieveOperationSchema.safeParse({}).success).toBe(false);
+    });
+
+    it("validates response_format options", () => {
+      expect(googleVideosRetrieveOperationSchema.safeParse({ operation_name: "operations/123", response_format: "url" }).success).toBe(true);
+      expect(googleVideosRetrieveOperationSchema.safeParse({ operation_name: "operations/123", response_format: "b64_json" }).success).toBe(true);
+    });
+  });
+
+  describe("googleVideosRetrieveContentSchema (google-videos-retrieve-content)", () => {
+    it("validates required operation_name and applies default index", () => {
+      const result = googleVideosRetrieveContentSchema.safeParse({ operation_name: "operations/123" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.index).toBe(0);
+        expect(result.data.tool_result).toBe("resource_link");
+        expect(result.data.response_format).toBe("url");
+      }
+    });
+
+    it("validates tool_result options", () => {
+      expect(googleVideosRetrieveContentSchema.safeParse({ operation_name: "operations/123", tool_result: "resource_link" }).success).toBe(true);
+      expect(googleVideosRetrieveContentSchema.safeParse({ operation_name: "operations/123", tool_result: "resource" }).success).toBe(true);
+    });
+  });
+
   describe("openaiVideosRemixSchema (openai-videos-remix)", () => {
     it("validates minimal remix input and defaults", () => {
       const result = openaiVideosRemixSchema.safeParse({ video_id: "vid_123", prompt: "Make it noir" });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.wait_for_completion).toBe(false);
-        expect(result.data.timeout_ms).toBe(300000);
+        expect(result.data.wait_for_completion).toBe(true);
+        expect(result.data.timeout_ms).toBe(900000);
         expect(result.data.poll_interval_ms).toBe(2000);
         expect(result.data.download_variants).toEqual(["video"]);
+        expect(result.data.tool_result).toBe("resource_link");
       }
     });
 
@@ -285,7 +365,13 @@ describe("schemas module", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.variant).toBe("video");
+        expect(result.data.tool_result).toBe("resource_link");
       }
+    });
+
+    it("validates tool_result options", () => {
+      expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", tool_result: "resource_link" }).success).toBe(true);
+      expect(openaiVideosRetrieveContentSchema.safeParse({ video_id: "vid_123", tool_result: "resource" }).success).toBe(true);
     });
 
     it("rejects invalid variant", () => {

@@ -133,4 +133,41 @@ describe("fetch-images integration", () => {
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
   });
+
+  it("accepts absolute, relative, and file:// sources", async () => {
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
+
+    const fileName = "sample.png";
+    const absPath = path.join(tmpDir, fileName);
+    await fs.promises.writeFile(absPath, TINY_PNG_BUFFER);
+
+    const sources = [
+      absPath, // absolute path
+      fileName, // relative path
+      `file://${absPath}`, // file:// absolute
+      `file://${fileName}`, // file:// relative
+    ];
+
+    const result = await callFetchImages(
+      { sources, tool_result: "resource_link" },
+      {
+        MEDIA_GEN_DIRS: tmpDir,
+        MEDIA_GEN_MCP_URL_PREFIXES: "https://example.com/media",
+      },
+    );
+
+    const res = result as { isError?: boolean; structuredContent?: { data?: Array<{ url?: string }> } };
+    expect(res.isError).not.toBe(true);
+
+    const urls = (res.structuredContent?.data ?? [])
+      .map((d) => d.url)
+      .filter((u): u is string => typeof u === "string");
+
+    expect(urls).toHaveLength(sources.length);
+    urls.forEach((u) => {
+      expect(u).toContain(fileName);
+    });
+
+    await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  });
 });

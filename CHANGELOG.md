@@ -7,6 +7,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- Video download tools now support `tool_result=resource` to emit MCP `resource` (EmbeddedResource) blocks with base64 `resource.blob`.
+- Google video tools now support `response_format` (`url` | `b64_json`) to control `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
+
+### Changed
+- Default OpenAI Images model is now `gpt-image-1.5` (still supports `gpt-image-1`).
+- Pricing estimate rates updated for `gpt-image-1.5`.
+- Default `timeout_ms` for video `wait_for_completion` is now `900000` (15 minutes).
+
+### Fixed
+- Google video tools now log operation ids at `info` level and avoid emitting huge base64 payloads in JSON `text` blocks.
+
 ## [1.0.0] - 2025-12-13
 
 ### Added
