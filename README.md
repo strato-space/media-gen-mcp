@@ -566,7 +566,7 @@ Arguments (input schema):
   - `sora-2-pro` supports the full size set below.
 - `seconds` ("4" | "8" | "12", optional)
 - `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
-  - If `input_reference` is provided and `size` is omitted, the server defaults to `720x1280` for preprocessing and the API call.
+  - `1024x1792` and `1792x1024` require `sora-2-pro`.
   - If `input_reference` is omitted and `size` is omitted, the API default is used.
 - `wait_for_completion` (boolean, default: true)
   - When true, the server polls `openai-videos-retrieve` until `completed` or `failed` (or timeout), then downloads assets.

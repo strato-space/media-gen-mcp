@@ -83,11 +83,11 @@ export const openaiVideosCreateSchema = z.object({
   input_reference_background: z.union([inputReferenceBackgroundEnum, hexColorSchema]).default("blur").optional()
     .describe("Padding background when input_reference_fit=contain: blur (default), black, white, or hex color (#RRGGBB/#RRGGBBAA)."),
   model: videoModelEnum.default("sora-2").optional()
-    .describe("Video model to use (default: sora-2)."),
+    .describe("Video model to use (default: sora-2). Sizes 1024x1792 and 1792x1024 require sora-2-pro."),
   seconds: videoSecondsEnum.optional()
     .describe("Clip duration in seconds (default: 4 seconds)."),
   size: videoSizeEnum.optional()
-    .describe("Output resolution formatted as width x height (default: 720x1280)."),
+    .describe("Output resolution formatted as width x height. Sizes 1024x1792 and 1792x1024 require sora-2-pro."),
 
   wait_for_completion: z.boolean().default(true).optional()
     .describe("If true, poll the job until completed/failed (then optionally download assets). Default: true."),
