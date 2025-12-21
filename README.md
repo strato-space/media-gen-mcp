@@ -561,9 +561,7 @@ Arguments (input schema):
     - `stretch`: resize with distortion
 - `input_reference_background` ("blur" | "black" | "white" | "#RRGGBB" | "#RRGGBBAA", default: "blur")
   - Padding background used when `input_reference_fit="contain"`.
-- `model` ("sora-2" | "sora-2-pro", default: "sora-2")
-  - `sora-2` supports only `720x1280` and `1280x720`.
-  - `sora-2-pro` supports the full size set below.
+- `model` ("sora-2" | "sora-2-pro", default: "sora-2-pro")
 - `seconds` ("4" | "8" | "12", optional)
 - `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
   - `1024x1792` and `1792x1024` require `sora-2-pro`.

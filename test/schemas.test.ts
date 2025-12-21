@@ -198,7 +198,7 @@ describe("schemas module", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.model).toBe("sora-2");
+        expect(result.data.model).toBe("sora-2-pro");
         expect(result.data.input_reference_fit).toBe("contain");
         expect(result.data.input_reference_background).toBe("blur");
         expect(result.data.wait_for_completion).toBe(true);
