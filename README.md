@@ -34,30 +34,30 @@
   `content` items (`text`, `image`, `resource_link`, `resource`), optional `structuredContent`, optional top-level `files`, and the `isError` flag for failures.
 
 - **Full gpt-image-1.5 and sora-2/sora-2-pro parameters coverage (generate & edit)**  
-  - `openai-images-generate` mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1.5` (and `gpt-image-1`) (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
-  - `openai-images-edit` mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1.5` (and `gpt-image-1`) (image, mask, `n`, quality, size, `user`).
+  - [`openai-images-generate`](#openai-images-generate) mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1.5` (and `gpt-image-1`) (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
+  - [`openai-images-edit`](#openai-images-edit) mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1.5` (and `gpt-image-1`) (image, mask, `n`, quality, size, `user`).
 
 - **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / content)**  
-  - `openai-videos-create` mirrors [`videos/create`](https://platform.openai.com/docs/api-reference/videos/create) and can optionally wait for completion.
-  - `openai-videos-remix` mirrors [`videos/remix`](https://platform.openai.com/docs/api-reference/videos/remix).
-  - `openai-videos-list` mirrors [`videos/list`](https://platform.openai.com/docs/api-reference/videos/list).
-  - `openai-videos-retrieve` mirrors [`videos/retrieve`](https://platform.openai.com/docs/api-reference/videos/retrieve).
-  - `openai-videos-delete` mirrors [`videos/delete`](https://platform.openai.com/docs/api-reference/videos/delete).
-  - `openai-videos-retrieve-content` mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
+  - [`openai-videos-create`](#openai-videos-create) mirrors [`videos/create`](https://platform.openai.com/docs/api-reference/videos/create) and can optionally wait for completion.
+  - [`openai-videos-remix`](#openai-videos-remix) mirrors [`videos/remix`](https://platform.openai.com/docs/api-reference/videos/remix).
+  - [`openai-videos-list`](#openai-videos-list) mirrors [`videos/list`](https://platform.openai.com/docs/api-reference/videos/list).
+  - [`openai-videos-retrieve`](#openai-videos-retrieve) mirrors [`videos/retrieve`](https://platform.openai.com/docs/api-reference/videos/retrieve).
+  - [`openai-videos-delete`](#openai-videos-delete) mirrors [`videos/delete`](https://platform.openai.com/docs/api-reference/videos/delete).
+  - [`openai-videos-retrieve-content`](#openai-videos-retrieve-content) mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Google GenAI (Veo) operations + downloads (generate / retrieve operation / retrieve content)**  
-  - `google-videos-generate` starts a long-running operation (`ai.models.generateVideos`) and can optionally wait for completion and download `.mp4` outputs.
-  - `google-videos-retrieve-operation` polls an existing operation.
-  - `google-videos-retrieve-content` downloads an `.mp4` from a completed operation, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
+  - [`google-videos-generate`](#google-videos-generate) starts a long-running operation (`ai.models.generateVideos`) and can optionally wait for completion and download `.mp4` outputs.
+  - [`google-videos-retrieve-operation`](#google-videos-retrieve-operation) polls an existing operation.
+  - [`google-videos-retrieve-content`](#google-videos-retrieve-content) downloads an `.mp4` from a completed operation, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Fetch and process images from URLs or files**  
-  `fetch-images` tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
+  [`fetch-images`](#fetch-images) tool loads images from HTTP(S) URLs or local file paths with optional, user-controlled compression (disabled by default). Supports parallel processing of up to 20 images.
 
 - **Fetch videos from URLs or files**  
-  `fetch-videos` tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
+  [`fetch-videos`](#fetch-videos) tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Mix and edit up to 16 images**  
-  `openai-images-edit` accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for GPT Image models (`gpt-image-1.5`, `gpt-image-1`) image edits.
+  [`openai-images-edit`](#openai-images-edit) accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for GPT Image models (`gpt-image-1.5`, `gpt-image-1`) image edits.
 
 - **Smart image compression**  
   Built-in compression using [sharp](https://sharp.pixelplumbing.com/) — iteratively reduces quality and dimensions to fit MCP payload limits while maintaining visual quality.
@@ -67,7 +67,7 @@
   - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients via `content[]` depending on `tool_result` (`resource_link`/`image` for images, `resource_link`/`resource` for video downloads).
 
 - **Built-in test-images tool for MCP client debugging**  
-  `test-images` reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
+  [`test-images`](#test-images) reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
 
 - **Structured MCP error handling**  
   All tool errors (validation, OpenAI API failures, I/O) are returned as MCP errors with
@@ -562,8 +562,12 @@ Arguments (input schema):
 - `input_reference_background` ("blur" | "black" | "white" | "#RRGGBB" | "#RRGGBBAA", default: "blur")
   - Padding background used when `input_reference_fit="contain"`.
 - `model` ("sora-2" | "sora-2-pro", default: "sora-2")
+  - `sora-2` supports only `720x1280` and `1280x720`.
+  - `sora-2-pro` supports the full size set below.
 - `seconds` ("4" | "8" | "12", optional)
 - `size` ("720x1280" | "1280x720" | "1024x1792" | "1792x1024", optional)
+  - If `input_reference` is provided and `size` is omitted, the server defaults to `720x1280` for preprocessing and the API call.
+  - If `input_reference` is omitted and `size` is omitted, the API default is used.
 - `wait_for_completion` (boolean, default: true)
   - When true, the server polls `openai-videos-retrieve` until `completed` or `failed` (or timeout), then downloads assets.
 - `timeout_ms` (integer, default: 900000)

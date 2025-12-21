@@ -1379,7 +1379,7 @@ function buildImageToolResult(
 (async () => {
 	const server = new McpServer({
 	  name: "media-gen-mcp",
-	  version: "1.0.0"
+	  version: "1.1.1"
 	}, {
   capabilities: {
     tools: { listChanged: false }

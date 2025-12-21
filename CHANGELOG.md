@@ -19,6 +19,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Fixed
 - Google video tools now log operation ids at `info` level and avoid emitting huge base64 payloads in JSON `text` blocks.
 
+## [1.1.1] - 2025-12-21
+
+### Changed
+- Documented model-specific size constraints and default sizing behavior for `openai-videos-create`.
+
 ## [1.0.0] - 2025-12-13
 
 ### Added
