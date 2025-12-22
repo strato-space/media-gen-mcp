@@ -2359,22 +2359,20 @@ function buildImageToolResult(
           toolLog.info("downloads complete", { operation_name: finalOperationName, downloads });
         }
 
-        content.push({
-          type: "text",
-          text: JSON.stringify({ operation_name: finalOperationName, generated_videos: generated.length, downloads }, null, 2),
+        const structuredContent = await buildGoogleVideosStructuredContent({
+          operation: finalOperation,
+          responseFormat,
+          downloads: downloadsForStructured,
         });
-        content.push({ type: "text", text: JSON.stringify(summarizeArgsForLog(finalOperation), null, 2) });
 
-	        const structuredContent = await buildGoogleVideosStructuredContent({
-	          operation: finalOperation,
-	          responseFormat,
-	          downloads: downloadsForStructured,
-	        });
+        if (structuredContent) {
+          content.push({ type: "text", text: JSON.stringify(structuredContent, null, 2) });
+        }
 
-	        return {
-	          content,
-	          structuredContent,
-	        };
+        return {
+          content,
+          structuredContent,
+        };
       } catch (err) {
         return buildErrorResult(err, "google-videos-generate");
       }
