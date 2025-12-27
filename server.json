@@ -1,0 +1,120 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.strato-space/media-gen-mcp",
+  "description": "MCP server for OpenAI Images/Videos and Google GenAI (Veo) media generation.",
+  "repository": {
+    "url": "https://github.com/strato-space/media-gen-mcp",
+    "source": "github"
+  },
+  "version": "1.0.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@strato-space/media-gen-mcp",
+      "version": "1.0.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "OpenAI API key (required for OpenAI image/video tools).",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "GEMINI_API_KEY",
+          "description": "Gemini API key (alternative to GOOGLE_API_KEY).",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "GOOGLE_API_KEY",
+          "description": "Google GenAI API key for Veo video tools.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "GOOGLE_GENAI_USE_VERTEXAI",
+          "description": "Set to true to use Vertex AI for Google GenAI.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "GOOGLE_CLOUD_PROJECT",
+          "description": "GCP project id for Vertex AI.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "GOOGLE_CLOUD_LOCATION",
+          "description": "GCP region for Vertex AI (e.g. us-central1).",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "AZURE_OPENAI_API_KEY",
+          "description": "Azure OpenAI API key (optional).",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "AZURE_OPENAI_ENDPOINT",
+          "description": "Azure OpenAI endpoint hostname.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "OPENAI_API_VERSION",
+          "description": "Azure OpenAI API version.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "AZURE_OPENAI_DEPLOYMENT",
+          "description": "Azure OpenAI deployment name.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "MEDIA_GEN_DIRS",
+          "description": "Comma-separated output directories for media files.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "MEDIA_GEN_URLS",
+          "description": "Comma-separated URL prefixes allowed for fetch tools.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "MEDIA_GEN_MCP_URL_PREFIXES",
+          "description": "Public URL prefixes for mapping local output files.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "MEDIA_GEN_MCP_TEST_SAMPLE_DIR",
+          "description": "Path to sample images for the test-images tool.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

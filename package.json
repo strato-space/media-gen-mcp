@@ -1,8 +1,19 @@
 {
-  "name": "media-gen-mcp",
-  "version": "1.0.2",
+  "name": "@strato-space/media-gen-mcp",
+  "version": "1.0.3",
+  "description": "MCP server for OpenAI Images/Videos and Google GenAI (Veo) media generation.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/strato-space/media-gen-mcp.git"
+  },
+  "mcpName": "io.github.strato-space/media-gen-mcp",
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"

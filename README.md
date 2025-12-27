@@ -1,7 +1,7 @@
 # media-gen-mcp
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/media-gen-mcp"><img src="https://img.shields.io/npm/v/media-gen-mcp?label=media-gen-mcp&color=brightgreen" alt="media-gen-mcp"></a>
+  <a href="https://www.npmjs.com/package/@strato-space/media-gen-mcp"><img src="https://img.shields.io/npm/v/@strato-space%2Fmedia-gen-mcp?label=@strato-space/media-gen-mcp&color=brightgreen" alt="@strato-space/media-gen-mcp"></a>
   <a href="https://www.npmjs.com/package/@modelcontextprotocol/sdk"><img src="https://img.shields.io/npm/v/@modelcontextprotocol/sdk?label=MCP%20SDK&color=blue" alt="MCP SDK"></a>
   <a href="https://www.npmjs.com/package/openai"><img src="https://img.shields.io/npm/v/openai?label=OpenAI%20SDK&color=blueviolet" alt="OpenAI SDK"></a>
   <a href="https://github.com/punkpeye/mcp-proxy"><img src="https://img.shields.io/github/stars/punkpeye/mcp-proxy?label=mcp-proxy&style=social" alt="mcp-proxy"></a>

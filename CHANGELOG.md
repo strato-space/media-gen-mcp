@@ -19,6 +19,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Fixed
 - Google video tools now log operation ids at `info` level and avoid emitting huge base64 payloads in JSON `text` blocks.
 
+## [1.0.3] - 2025-12-27
+
+### Added
+- MCP Registry publishing metadata (`mcpName`) and `server.json`.
+- npm package files allowlist to include build output.
+
+### Changed
+- npm package name is now `@strato-space/media-gen-mcp`.
+
 ## [1.0.1] - 2025-12-21
 
 ### Changed
