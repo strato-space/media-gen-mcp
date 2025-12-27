@@ -46,7 +46,7 @@
   - [`openai-videos-retrieve-content`](#openai-videos-retrieve-content) mirrors [`videos/content`](https://platform.openai.com/docs/api-reference/videos/content) and downloads `video` / `thumbnail` / `spritesheet` assets to disk, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Google GenAI (Veo) operations + downloads (generate / retrieve operation / retrieve content)**  
-  - [`google-videos-generate`](#google-videos-generate) starts a long-running operation (`ai.models.generateVideos`) and can optionally wait for completion and download `.mp4` outputs.
+  - [`google-videos-generate`](#google-videos-generate) starts a long-running operation (`ai.models.generateVideos`) and can optionally wait for completion and download `.mp4` outputs. [Veo model reference](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/veo-video-generation)
   - [`google-videos-retrieve-operation`](#google-videos-retrieve-operation) polls an existing operation.
   - [`google-videos-retrieve-content`](#google-videos-retrieve-content) downloads an `.mp4` from a completed operation, returning MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
@@ -649,6 +649,9 @@ Arguments (input schema):
 - `number_of_videos` (integer, default: `1`)
 - `aspect_ratio` (`"16:9" | "9:16"`, optional)
 - `duration_seconds` (integer, optional)
+  - Veo 2 models: 5–8 seconds (default: 8)
+  - Veo 3 models: 4, 6, or 8 seconds (default: 8)
+  - When using `referenceImages`: 8 seconds
 - `person_generation` (`"DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL"`, optional)
 - `wait_for_completion` (boolean, default: `true`)
 - `timeout_ms` (integer, default: `900000`)
