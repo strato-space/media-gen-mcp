@@ -273,6 +273,8 @@ Control via environment:
 - `MEDIA_GEN_MCP_LOG_SANITIZE_IMAGES` (default: `true`)
   - `1`, `true`, `yes`, `on` – enable truncation (default behaviour).
   - `0`, `false`, `no`, `off` – disable truncation and log full payloads.
+- `MEDIA_GEN_MCP_STDOUT_GUARD` (default: `true`)
+  - When not set to `false`, routes non-JSON-RPC stdout lines to stderr in stdio mode.
 
 Field list and limits are configured in `src/lib/logger.ts` via
 `LOG_SANITIZE_KEYS` and `LOG_TRUNCATE_DATA_MAX`.

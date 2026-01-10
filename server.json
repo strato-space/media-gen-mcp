@@ -6,12 +6,12 @@
     "url": "https://github.com/strato-space/media-gen-mcp",
     "source": "github"
   },
-  "version": "1.0.4",
+  "version": "1.0.5",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@strato-space/media-gen-mcp",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "transport": {
         "type": "stdio"
       },
@@ -110,6 +110,13 @@
         {
           "name": "MEDIA_GEN_MCP_TEST_SAMPLE_DIR",
           "description": "Path to sample images for the test-images tool.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "MEDIA_GEN_MCP_STDOUT_GUARD",
+          "description": "When not set to false, routes non-JSON-RPC stdout lines to stderr in stdio mode.",
           "isRequired": false,
           "isSecret": false,
           "format": "string"
