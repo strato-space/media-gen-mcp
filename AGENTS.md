@@ -122,7 +122,6 @@ All strict checks are enabled in `tsconfig.json` and used by `npm run build` / `
 | `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES` | No | If `true`, allows `fetch-images` to use `n` to return the last N files from `MEDIA_GEN_DIRS[0]`. |
 | `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS` | No | If `true`, allows `fetch-videos` to use `n` to return the last N video files from `MEDIA_GEN_DIRS[0]`. |
 | `MEDIA_GEN_MCP_DEBUG` | No | If `true`, enables verbose startup/config logging. |
-| `MEDIA_GEN_MCP_STDOUT_GUARD` | No | When not `false`, routes non-JSON-RPC stdout lines to stderr in stdio mode. |
 
 *Required for OpenAI tools.
 

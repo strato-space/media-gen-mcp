@@ -65,67 +65,6 @@ import { GoogleGenAI, GenerateVideosOperation, type Video } from "@google/genai"
 // Optional sharp import for image compression
 // Falls back to no-op if sharp is not available (e.g., in environments without native modules)
 
-// Route non-MCP output away from stdout (MCP uses stdout for JSON-RPC).
-function installStdoutGuard(): void {
-  if (process.stdout.isTTY) return;
-
-  console.log = (...args: unknown[]) => console.error(...args);
-  console.info = (...args: unknown[]) => console.error(...args);
-  console.debug = (...args: unknown[]) => console.error(...args);
-
-  const originalWrite = process.stdout.write.bind(process.stdout);
-  const stderrWrite = process.stderr.write.bind(process.stderr);
-  let buffer = "";
-
-  const isGuardEnabled = (): boolean => process.env["MEDIA_GEN_MCP_STDOUT_GUARD"] !== "false";
-
-  const looksLikeMcpPayload = (line: string): boolean => {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
-    return trimmed.includes("\"jsonrpc\"");
-  };
-
-  const writeLine = (line: string): void => {
-    if (!isGuardEnabled()) {
-      originalWrite(line);
-      return;
-    }
-    if (looksLikeMcpPayload(line)) {
-      originalWrite(line);
-    } else {
-      stderrWrite(line);
-    }
-  };
-
-  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((err?: Error) => void), cb?: (err?: Error) => void) => {
-    const callback = typeof encoding === "function" ? encoding : cb;
-    const enc = typeof encoding === "string" ? encoding : "utf8";
-    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(enc);
-
-    buffer += text;
-    let idx = buffer.indexOf("\n");
-    while (idx !== -1) {
-      const line = buffer.slice(0, idx + 1);
-      buffer = buffer.slice(idx + 1);
-      writeLine(line);
-      idx = buffer.indexOf("\n");
-    }
-
-    if (callback) callback();
-    return true;
-  }) as typeof process.stdout.write;
-
-  process.on("exit", () => {
-    if (buffer.length > 0) {
-      stderrWrite(buffer);
-      buffer = "";
-    }
-  });
-}
-
-installStdoutGuard();
-
 // Load environment variables
 const envFileIndex = process.argv.indexOf("--env-file");
 if (envFileIndex !== -1) {
@@ -566,13 +505,11 @@ async function indexMd5Files(rootDir: string): Promise<Map<string, string>> {
     if (!allowedExts.has(ext)) continue;
     const match = entry.name.match(md5FilenameRegex);
     if (!match) continue;
-    const hash = match[1];
-    if (!hash) continue;
-    const normalizedHash = hash.toLowerCase();
+    const hash = match[1].toLowerCase();
     const candidate = path.resolve(rootDir, entry.name);
     if (!isPathInAllowedDirs(candidate)) continue;
-    if (!map.has(normalizedHash)) {
-      map.set(normalizedHash, candidate);
+    if (!map.has(hash)) {
+      map.set(hash, candidate);
     }
   }
 

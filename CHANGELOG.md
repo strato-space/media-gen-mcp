@@ -10,17 +10,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 - OpenAI Images model `gpt-image-1-mini` for `openai-images-generate` and `openai-images-edit` (pricing estimates follow the `gpt-image-1` rate table until updated).
 
-## [1.0.5] - 2026-01-10
-
-### Added
-- `MEDIA_GEN_MCP_STDOUT_GUARD` to redirect non-JSON-RPC stdout lines to stderr in stdio mode (defaults to enabled).
-
-### Changed
-- Stdout guard now covers early startup logs (including dotenv) to protect MCP handshakes.
-
-### Fixed
-- Strict TypeScript narrowing for md5 filename indexing.
-
 ## [1.0.4] - 2025-12-27
 
 ### Added
