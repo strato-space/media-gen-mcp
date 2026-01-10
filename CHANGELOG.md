@@ -8,6 +8,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ## [Unreleased]
 
 ### Added
+- OpenAI Images model `gpt-image-1-mini` for `openai-images-generate` and `openai-images-edit` (pricing estimates follow the `gpt-image-1` rate table until updated).
+
+## [1.0.4] - 2025-12-27
+
+### Added
 - Video download tools now support `tool_result=resource` to emit MCP `resource` (EmbeddedResource) blocks with base64 `resource.blob`.
 - Google video tools now support `response_format` (`url` | `b64_json`) to control `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
 

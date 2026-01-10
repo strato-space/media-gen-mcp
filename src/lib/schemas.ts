@@ -37,7 +37,7 @@ export type VideoToolResultType = z.infer<typeof videoToolResultEnum>;
 const responseFormatEnum = z.enum(["url", "b64_json"]);
 export type ResponseFormatType = z.infer<typeof responseFormatEnum>;
 
-const openaiImageModelEnum = z.enum(["gpt-image-1.5", "gpt-image-1"]);
+const openaiImageModelEnum = z.enum(["gpt-image-1.5", "gpt-image-1-mini", "gpt-image-1"]);
 export type OpenAIImageModelType = z.infer<typeof openaiImageModelEnum>;
 
 // ─────────────────────────────────────────────────────────────────────────────

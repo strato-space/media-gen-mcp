@@ -481,6 +481,86 @@ function buildDefaultOutputBaseName(opts: { methodName: string; id: string; time
   return `output_${ts}_media-gen__${method}_${id}`;
 }
 
+function buildMd5OutputBaseName(opts: { methodName: string; md5: string }): string {
+  const method = sanitizeForFilename(opts.methodName);
+  const md5 = sanitizeForFilename(opts.md5.toLowerCase());
+  return `md5_${md5}_media-gen__${method}`;
+}
+
+function computeImageMd5(image: ImageData): string {
+  const buffer = Buffer.from(image.b64, "base64");
+  return crypto.createHash("md5").update(buffer).digest("hex");
+}
+
+const md5FilenameRegex = /^md5_([a-f0-9]{32})/i;
+
+async function indexMd5Files(rootDir: string): Promise<Map<string, string>> {
+  const entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
+  const allowedExts = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+  const map = new Map<string, string>();
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const ext = path.extname(entry.name).toLowerCase();
+    if (!allowedExts.has(ext)) continue;
+    const match = entry.name.match(md5FilenameRegex);
+    if (!match) continue;
+    const hash = match[1].toLowerCase();
+    const candidate = path.resolve(rootDir, entry.name);
+    if (!isPathInAllowedDirs(candidate)) continue;
+    if (!map.has(hash)) {
+      map.set(hash, candidate);
+    }
+  }
+
+  return map;
+}
+
+async function writeImagesAndBuildLinksWithMd5(
+  images: ImageData[],
+  md5Hashes: string[],
+  methodName: string,
+): Promise<ProcessedImagesResult> {
+  const files: string[] = [];
+  const resourceLinks: ResourceLink[] = [];
+  const existing = await indexMd5Files(primaryOutputDir);
+
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    if (!img) continue;
+    const hash = (md5Hashes[i] || computeImageMd5(img)).toLowerCase();
+    let filePath = existing.get(hash);
+
+    if (!filePath) {
+      const baseName = buildMd5OutputBaseName({ methodName, md5: hash });
+      const ext = `.${img.ext}`;
+      filePath = path.join(primaryOutputDir, `${baseName}${ext}`);
+      await fs.promises.writeFile(filePath, Buffer.from(img.b64, "base64"));
+      existing.set(hash, filePath);
+    }
+
+    const uri = `file://${filePath}`;
+    files.push(uri);
+    resourceLinks.push({
+      type: "resource_link",
+      uri,
+      name: path.basename(filePath),
+      mimeType: img.mimeType,
+    });
+  }
+
+  const urls: string[] = [];
+  for (const fileUri of files) {
+    const filePath = fileUri.startsWith("file://")
+      ? fileUri.slice("file://".length)
+      : fileUri;
+    const httpUrl = buildPublicUrlForFile(filePath);
+    urls.push(httpUrl ?? "");
+  }
+
+  return { files, urls, resourceLinks };
+}
+
 function resolveOutputPath(
   images: ImageData[],
   responseFormat: "url" | "b64_json",
@@ -1390,7 +1470,7 @@ function buildImageToolResult(
 		  const openaiImagesGenerateBaseSchema = z.object({
 		    prompt: z.string().max(32000),
 		    background: z.enum(["transparent", "opaque", "auto"]).optional(),
-		    model: z.enum(["gpt-image-1.5", "gpt-image-1"]).default("gpt-image-1.5"),
+	    model: z.enum(["gpt-image-1.5", "gpt-image-1-mini", "gpt-image-1"]).default("gpt-image-1.5"),
 		    moderation: z.enum(["auto", "low"]).optional(),
 		    n: z.number().int().min(1).max(10).optional(),
 		    output_compression: z.number().int().min(0).max(100).optional(),
@@ -1413,7 +1493,7 @@ function buildImageToolResult(
 	    "openai-images-generate",
 	    {
 	      title: "OpenAI Images Generate",
-	      description: "Generate images from text prompts using OpenAI gpt-image-1.5 (default) or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
+	      description: "Generate images from text prompts using OpenAI gpt-image-1.5 (default), gpt-image-1-mini, or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
 	      inputSchema: openaiImagesGenerateBaseSchema.shape,
 	      annotations: openaiToolAnnotations,
 	    },
@@ -1532,7 +1612,7 @@ function buildImageToolResult(
 		    ),
 		    prompt: z.string().max(32000).describe("A text description of the desired edit. Max 32000 chars."),
 		    mask: z.string().optional().describe("Optional absolute path, base64 string, or HTTP(S) URL for a mask image (png < 4MB, same dimensions as the first image). Fully transparent areas indicate where to edit."),
-		    model: z.enum(["gpt-image-1.5", "gpt-image-1"]).default("gpt-image-1.5"),
+	    model: z.enum(["gpt-image-1.5", "gpt-image-1-mini", "gpt-image-1"]).default("gpt-image-1.5"),
 		    n: z.number().int().min(1).max(10).optional().describe("Number of images to generate (1-10)."),
 		    quality: z.enum(["auto", "high", "medium", "low"]).default("high").describe("Quality (high, medium, low). Default: high."),
 	    size: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1536").describe("Size of the generated images. Default: 1024x1536."),
@@ -1548,12 +1628,12 @@ function buildImageToolResult(
 
   type OpenAIImagesEditToolArgs = z.input<typeof openaiImagesEditBaseSchema>;
 
-	  // Edit Image Tool (gpt-image-1.5/gpt-image-1)
+	  // Edit Image Tool (gpt-image-1.5/gpt-image-1-mini/gpt-image-1)
 	  server.registerTool(
 	    "openai-images-edit",
 	    {
 	      title: "OpenAI Images Edit",
-	      description: "Edit images (inpainting, outpainting, compositing) from 1 to 16 inputs using OpenAI gpt-image-1.5 (default) or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
+	      description: "Edit images (inpainting, outpainting, compositing) from 1 to 16 inputs using OpenAI gpt-image-1.5 (default), gpt-image-1-mini, or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
 	      inputSchema: openaiImagesEditBaseSchema.shape,
 	      annotations: openaiToolAnnotations,
 	    },
@@ -2826,8 +2906,14 @@ function buildImageToolResult(
           };
         }
 
-        const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "fetch-images");
-        const processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
+        let processedResult: ProcessedImagesResult;
+        if (file) {
+          const { effectiveFileOutput } = resolveOutputPath(images, response_format, file, "fetch-images");
+          processedResult = await writeImagesAndBuildLinks(images, effectiveFileOutput);
+        } else {
+          const md5Hashes = images.map((image) => computeImageMd5(image));
+          processedResult = await writeImagesAndBuildLinksWithMd5(images, md5Hashes, "fetch-images");
+        }
 
         const revisedPromptItems: TextContent[] = errors.length > 0
           ? [{ type: "text", text: `Errors (${errors.length}/${activeSources.length}):\n${errors.join("\n")}` }]

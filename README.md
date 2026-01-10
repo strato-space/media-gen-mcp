@@ -13,11 +13,11 @@
 
 ---
 
-**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1.5`, `gpt-image-1`), OpenAI Videos (Sora), and Google GenAI Videos (Veo): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
+**Media Gen MCP** is a **strict TypeScript** Model Context Protocol (MCP) server for OpenAI Images (`gpt-image-1.5`, `gpt-image-1-mini`, `gpt-image-1`), OpenAI Videos (Sora), and Google GenAI Videos (Veo): generate/edit images, create/remix video jobs, and fetch media from URLs or disk with smart `resource_link` vs inline `image` outputs and optional `sharp` processing. Production-focused (full strict typecheck, ESLint + Vitest CI). Works with fast-agent, Claude Desktop, ChatGPT, Cursor, VS Code, Windsurf, and any MCP-compatible client.
 
 **Design principle:** spec-first, type-safe image tooling – strict OpenAI Images API + MCP compliance with fully static TypeScript types and flexible result placements/response formats for different clients.
 
-- **Generate images** from text prompts using OpenAI's `gpt-image-1.5` model (with `gpt-image-1` compatibility and DALL·E support planned in future versions).
+- **Generate images** from text prompts using OpenAI's `gpt-image-1.5` model (also supports `gpt-image-1-mini` and `gpt-image-1`, with DALL·E support planned in future versions).
 - **Edit images** (inpainting, outpainting, compositing) from 1 up to 16 images at once, with advanced prompt control.
 - **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
 - **Generate videos** via Google GenAI (Veo) with operation polling and file-first downloads.
@@ -33,9 +33,9 @@
   Tool outputs are first-class [`CallToolResult`](https://github.com/modelcontextprotocol/spec/blob/main/schema/2025-11-25/schema.json) objects from the latest MCP schema, including:
   `content` items (`text`, `image`, `resource_link`, `resource`), optional `structuredContent`, optional top-level `files`, and the `isError` flag for failures.
 
-- **Full gpt-image-1.5 and sora-2/sora-2-pro parameters coverage (generate & edit)**  
-  - [`openai-images-generate`](#openai-images-generate) mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1.5` (and `gpt-image-1`) (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
-  - [`openai-images-edit`](#openai-images-edit) mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1.5` (and `gpt-image-1`) (image, mask, `n`, quality, size, `user`).
+- **Full gpt-image-1.5/gpt-image-1-mini and sora-2/sora-2-pro parameters coverage (generate & edit)**  
+  - [`openai-images-generate`](#openai-images-generate) mirrors the OpenAI Images [`create`](https://platform.openai.com/docs/api-reference/images/create) API for `gpt-image-1.5` (plus `gpt-image-1-mini`/`gpt-image-1`) (background, moderation, size, quality, output_format, output_compression, `n`, `user`, etc.).
+  - [`openai-images-edit`](#openai-images-edit) mirrors the OpenAI Images [`createEdit`](https://platform.openai.com/docs/api-reference/images/createEdit) API for `gpt-image-1.5` (plus `gpt-image-1-mini`/`gpt-image-1`) (image, mask, `n`, quality, size, `user`).
 
 - **OpenAI Videos (Sora) job tooling (create / remix / list / retrieve / delete / content)**  
   - [`openai-videos-create`](#openai-videos-create) mirrors [`videos/create`](https://platform.openai.com/docs/api-reference/videos/create) and can optionally wait for completion.
@@ -57,7 +57,7 @@
   [`fetch-videos`](#fetch-videos) tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
 - **Mix and edit up to 16 images**  
-  [`openai-images-edit`](#openai-images-edit) accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for GPT Image models (`gpt-image-1.5`, `gpt-image-1`) image edits.
+  [`openai-images-edit`](#openai-images-edit) accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for GPT Image models (`gpt-image-1.5`, `gpt-image-1-mini`, `gpt-image-1`) image edits.
 
 - **Smart image compression**  
   Built-in compression using [sharp](https://sharp.pixelplumbing.com/) — iteratively reduces quality and dimensions to fit MCP payload limits while maintaining visual quality.
@@ -418,7 +418,7 @@ Arguments (input schema):
 - `background` ("transparent" | "opaque" | "auto", optional)
   - Background handling mode.
   - If `background` is `"transparent"`, then `output_format` must be `"png"` or `"webp"`.
-- `model` ("gpt-image-1.5" | "gpt-image-1", optional, default: "gpt-image-1.5")
+- `model` ("gpt-image-1.5" | "gpt-image-1-mini" | "gpt-image-1", optional, default: "gpt-image-1.5")
 - `moderation` ("auto" | "low", optional)
   - Content moderation behavior, passed through to the Images API.
 - `n` (integer, optional)
@@ -445,7 +445,7 @@ Arguments (input schema):
 
 Behavior notes:
 
-- The server uses OpenAI `gpt-image-1.5` by default (set `model: "gpt-image-1"` for legacy behavior).
+- The server uses OpenAI `gpt-image-1.5` by default (set `model: "gpt-image-1-mini"` or `model: "gpt-image-1"` for legacy behavior).
 - If the total size of all base64 images would exceed the configured payload
   threshold (default ~50MB via `MCP_MAX_CONTENT_BYTES`), the server
   automatically switches the **effective output mode** to file/URL-based and saves
@@ -466,7 +466,7 @@ Output (MCP CallToolResult, when placement includes `"content"`):
 - When the effective `output` mode is `"file"`:
   - `content` contains one `resource_link` item per file, plus the same optional `text` items with revised prompts:
     - `{ type: "resource_link", uri: "file:///absolute-path-1.png", name: "absolute-path-1.png", mimeType: <image mime> }`
-  - For `gpt-image-1.5` and `gpt-image-1`, an additional `text` line is included with a pricing estimate (based on `structuredContent.usage`), and `structuredContent.pricing` contains the full pricing breakdown.
+  - For `gpt-image-1.5`, `gpt-image-1-mini`, and `gpt-image-1`, `structuredContent.usage` contains OpenAI usage and `structuredContent.pricing` contains the estimated cost breakdown (currency, model, token counts, cost). When placement includes `content`, an extra `text` line is appended: `cost_usd=...`.
 
 When `result_placement` includes `"api"`, `openai-images-generate` instead returns an **OpenAI Images API-like object** without MCP wrappers:
 
@@ -499,7 +499,7 @@ Arguments (input schema):
 - `mask` (string, optional)
   - Absolute path, base64 string, or HTTP(S) URL for a mask image (PNG < 4MB, same dimensions
     as the source image). Transparent areas mark regions to edit.
-- `model` ("gpt-image-1.5" | "gpt-image-1", optional, default: "gpt-image-1.5")
+- `model` ("gpt-image-1.5" | "gpt-image-1-mini" | "gpt-image-1", optional, default: "gpt-image-1.5")
 - `n` (integer, optional)
   - Number of images to generate.
   - Min: 1, Max: 10.
@@ -534,7 +534,7 @@ Output (MCP CallToolResult):
 - When the effective `output` mode is `"file"`:
   - `content` contains one `resource_link` item per file, plus the same optional `text` items with revised prompts:
     - `{ type: "resource_link", uri: "file:///absolute-path-1.png", name: "absolute-path-1.png", mimeType: "image/png" }`
-  - For `gpt-image-1.5` and `gpt-image-1`, an additional `text` line is included with a pricing estimate (based on `structuredContent.usage`), and `structuredContent.pricing` contains the full pricing breakdown.
+  - For `gpt-image-1.5`, `gpt-image-1-mini`, and `gpt-image-1`, `structuredContent.usage` contains OpenAI usage and `structuredContent.pricing` contains the estimated cost breakdown (currency, model, token counts, cost). When placement includes `content`, an extra `text` line is appended: `cost_usd=...`.
 
 When `result_placement` includes `"api"`, `openai-images-edit` follows the **same raw API format** as `openai-images-generate` (top-level `created`, `data[]`, `background`, `output_format`, `size`, `quality` with `b64_json` for base64 output or `url` for file output).
 

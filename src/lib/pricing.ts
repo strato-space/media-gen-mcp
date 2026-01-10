@@ -19,7 +19,7 @@ export interface SoraVideoPricingEstimate {
   cost: number;
 }
 
-export type GptImageModel = "gpt-image-1" | "gpt-image-1.5";
+export type GptImageModel = "gpt-image-1" | "gpt-image-1-mini" | "gpt-image-1.5";
 
 export interface GptImagePricingEstimate {
   currency: "USD";
@@ -38,7 +38,7 @@ function isSoraVideoModel(value: unknown): value is SoraVideoModel {
 }
 
 function isGptImageModel(value: unknown): value is GptImageModel {
-  return value === "gpt-image-1" || value === "gpt-image-1.5";
+  return value === "gpt-image-1" || value === "gpt-image-1-mini" || value === "gpt-image-1.5";
 }
 
 function isSoraVideoSeconds(value: unknown): value is SoraVideoSeconds {
@@ -138,7 +138,7 @@ export function estimateGptImageCost(input: {
   const uncachedImageTokens = imageTokens - cachedImageTokens;
 
   // Output tokens:
-  // - gpt-image-1: output_tokens (single bucket) priced as image output tokens.
+  // - gpt-image-1 / gpt-image-1-mini: output_tokens (single bucket) priced as image output tokens.
   // - gpt-image-1.5: output_tokens_details may include separate text/image buckets.
   let textOutputTokens = 0;
   let imageOutputTokens = 0;
@@ -197,6 +197,7 @@ export function estimateGptImageCost(input: {
     text_output_tokens: 0,
     image_output_tokens: outputTokens,
     // Source: https://openai.com/api/pricing/ (Image Generation API)
+    // Note: gpt-image-1-mini currently uses the gpt-image-1 price table until updated pricing is available.
     // - Text input:  $5.00 / 1M tokens
     // - Text cached: $1.25 / 1M cached input tokens
     // - Image input: $10.00 / 1M tokens

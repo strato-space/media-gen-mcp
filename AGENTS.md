@@ -4,7 +4,7 @@
 
 **media-gen-mcp** is a Model Context Protocol (MCP) server providing:
 
-- OpenAI Images tools (`gpt-image-1.5`, `gpt-image-1`) for image generation and edits/inpainting.
+- OpenAI Images tools (`gpt-image-1.5`, `gpt-image-1-mini`, `gpt-image-1`) for image generation and edits/inpainting.
 - OpenAI Videos (Sora) job tooling (`sora-2`, `sora-2-pro`) for video generation and asset downloads.
 - Local/URL image fetching plus optional compression and video input preprocessing via `sharp`.
 
