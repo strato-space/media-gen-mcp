@@ -19,6 +19,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Fixed
 - Google video tools now log operation ids at `info` level and avoid emitting huge base64 payloads in JSON `text` blocks.
 
+## 2026-01-22
+
+### PROBLEM SOLVED
+- Needed a reliable way to persist Telegram file URLs locally for MCP workflows; added a download tool that saves files under `MEDIA_GEN_DIRS` and returns `resource_link`/`resource`.
+
+### FEATURE IMPLEMENTED
+- Added `fetch-document` for downloading generic files from URLs or reusing local paths with `tool_result=resource_link|resource` outputs.
+
+### CHANGES
+- Implemented document MIME/extension inference and tool registration in `src/index.ts`.
+- Updated README/AGENTS documentation to cover fetch-document behavior and output formats.
+
 ## [1.0.1] - 2025-12-21
 
 ### Changed

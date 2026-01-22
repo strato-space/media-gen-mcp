@@ -3149,6 +3149,312 @@ function buildImageToolResult(
     },
   );
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // fetch-document: Fetch documents from URLs or local file paths
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchDocumentsSchema = z.object({
+    sources: z.array(z.string()).min(1).max(20)
+      .describe("Array of document sources: HTTP(S) URLs or file paths (absolute or relative to the first MEDIA_GEN_DIRS entry). Max 20 documents."),
+    tool_result: z.enum(["resource_link", "resource"]).default("resource_link")
+      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
+    file: z.string().optional()
+      .describe("Base path for output files (used when downloading from URLs). If multiple documents are downloaded, an index suffix is added."),
+  });
+
+  type FetchDocumentsArgs = z.input<typeof fetchDocumentsSchema>;
+
+  const DOCUMENT_MIME_TO_EXT: Record<string, string> = {
+    "application/pdf": ".pdf",
+    "application/json": ".json",
+    "application/zip": ".zip",
+    "application/x-7z-compressed": ".7z",
+    "application/x-rar-compressed": ".rar",
+    "application/x-tar": ".tar",
+    "application/gzip": ".gz",
+    "application/x-gzip": ".gz",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/msword": ".doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+    "text/csv": ".csv",
+  };
+
+  const DOCUMENT_EXT_TO_MIME: Record<string, string> = {
+    ".pdf": "application/pdf",
+    ".json": "application/json",
+    ".zip": "application/zip",
+    ".7z": "application/x-7z-compressed",
+    ".rar": "application/x-rar-compressed",
+    ".tar": "application/x-tar",
+    ".gz": "application/gzip",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+  };
+
+  function inferDocumentExtFromUrlOrContentType(url: string, contentType?: string): string {
+    const ct = normalizeContentType(contentType ?? null);
+    if (ct) {
+      if (ct.startsWith("image/")) {
+        return `.${imageMimeToExt(ct)}`;
+      }
+      if (ct.startsWith("video/")) {
+        return inferVideoExtFromUrlOrContentType(url, ct);
+      }
+      if (ct.startsWith("audio/")) {
+        if (ct === "audio/mpeg") return ".mp3";
+        if (ct === "audio/mp4") return ".m4a";
+        if (ct === "audio/wav") return ".wav";
+        if (ct === "audio/ogg") return ".ogg";
+        if (ct === "audio/aac") return ".aac";
+        if (ct === "audio/flac") return ".flac";
+      }
+      const mapped = DOCUMENT_MIME_TO_EXT[ct];
+      if (mapped) return mapped;
+    }
+
+    const urlPath = (() => {
+      try {
+        return new URL(url).pathname;
+      } catch {
+        return url;
+      }
+    })();
+    const ext = path.extname(urlPath);
+    if (ext) return ext;
+    return ".bin";
+  }
+
+  function inferDocumentMimeFromExt(extWithDot: string, contentType?: string): string {
+    const ct = normalizeContentType(contentType ?? null);
+    if (ct) return ct;
+
+    const ext = extWithDot.toLowerCase();
+    if (ext === ".jpg" || ext === ".jpeg" || ext === ".png" || ext === ".webp" || ext === ".gif") {
+      return imageExtToMime(ext.replace(".", ""));
+    }
+    if (KNOWN_VIDEO_FILE_EXTENSIONS.includes(ext as (typeof KNOWN_VIDEO_FILE_EXTENSIONS)[number])) {
+      return inferVideoMimeTypeFromExt(ext);
+    }
+    if (ext === ".mp3") return "audio/mpeg";
+    if (ext === ".m4a") return "audio/mp4";
+    if (ext === ".wav") return "audio/wav";
+    if (ext === ".ogg") return "audio/ogg";
+    if (ext === ".aac") return "audio/aac";
+    if (ext === ".flac") return "audio/flac";
+
+    return DOCUMENT_EXT_TO_MIME[ext] ?? "application/octet-stream";
+  }
+
+  function buildDocumentOutputPath(basePath: string, idx: number, extWithDot: string, total: number): string {
+    const dir = path.dirname(basePath);
+    const baseName = path.basename(basePath, path.extname(basePath));
+    if (total > 1) {
+      return path.join(dir, `${baseName}_${idx + 1}${extWithDot}`);
+    }
+    return path.join(dir, `${baseName}${extWithDot}`);
+  }
+
+  server.registerTool(
+    "fetch-document",
+    {
+      title: "Fetch Document",
+      description:
+        "Fetch documents from URLs or local file paths. Downloads remote URLs into MEDIA_GEN_DIRS and returns MCP content blocks as resource_link (default) or embedded resource.",
+      inputSchema: fetchDocumentsSchema.shape,
+      annotations: localToolAnnotations,
+    },
+    async (args: FetchDocumentsArgs) => {
+      try {
+        debugLogRawArgs("fetch-document", args);
+        const { sources, tool_result = "resource_link", file } = fetchDocumentsSchema.parse(args);
+
+        const activeSources = sources;
+        const resolvedBasePath = file ? resolvePathInPrimaryRoot(file) : undefined;
+        if (resolvedBasePath) {
+          await validateOutputDirectory(resolvedBasePath);
+        }
+
+        const results = await Promise.allSettled(
+          activeSources.map(async (source, idx) => {
+            // 1) Reuse existing local files mapped from public URL prefixes (or direct paths)
+            const mappedLocal = resolveSourceToLocalPathIfExisting(source);
+            if (mappedLocal) {
+              const stat = await fs.promises.stat(mappedLocal);
+              if (!stat.isFile()) {
+                throw new Error("Document source is not a file");
+              }
+              const ext = path.extname(mappedLocal) || ".bin";
+              const httpUrl = buildPublicUrlForFile(mappedLocal);
+              const fileUri = `file://${mappedLocal}`;
+              const uri = httpUrl ?? fileUri;
+              const mimeType = inferDocumentMimeFromExt(ext);
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri,
+                name: path.basename(mappedLocal),
+                mimeType,
+              };
+              return {
+                source,
+                filePath: mappedLocal,
+                fileUri,
+                uri,
+                mimeType,
+                resourceLink,
+                downloaded: false,
+              };
+            }
+
+            // 2) Local file paths
+            if (!isHttpUrl(source)) {
+              const resolvedSource = resolvePathInPrimaryRoot(source);
+              if (!isPathInAllowedDirs(resolvedSource)) {
+                throw new Error("Document path is outside allowed MEDIA_GEN_DIRS roots");
+              }
+              const stat = await fs.promises.stat(resolvedSource);
+              if (!stat.isFile()) {
+                throw new Error("Document path is not a file");
+              }
+              const ext = path.extname(resolvedSource) || ".bin";
+              const httpUrl = buildPublicUrlForFile(resolvedSource);
+              const fileUri = `file://${resolvedSource}`;
+              const uri = httpUrl ?? fileUri;
+              const mimeType = inferDocumentMimeFromExt(ext);
+              const resourceLink: ResourceLink = {
+                type: "resource_link",
+                uri,
+                name: path.basename(resolvedSource),
+                mimeType,
+              };
+              return {
+                source,
+                filePath: resolvedSource,
+                fileUri,
+                uri,
+                mimeType,
+                resourceLink,
+                downloaded: false,
+              };
+            }
+
+            if (!isUrlAllowedByEnv(source)) {
+              throw new Error("Document URL is not allowed by MEDIA_GEN_URLS");
+            }
+
+            const { buffer, contentType } = await fetchBinaryFromUrl(source);
+            const ext = inferDocumentExtFromUrlOrContentType(source, contentType);
+            const outPath = resolvedBasePath
+              ? buildDocumentOutputPath(resolvedBasePath, idx, ext, activeSources.length)
+              : path.join(primaryOutputDir, `${buildDefaultOutputBaseName({ methodName: "fetch-document", id: crypto.randomUUID() })}${ext}`);
+
+            await validateOutputDirectory(outPath);
+            await fs.promises.writeFile(outPath, buffer);
+
+            const httpUrl = buildPublicUrlForFile(outPath);
+            const fileUri = `file://${outPath}`;
+            const uri = httpUrl ?? fileUri;
+            const mimeType = inferDocumentMimeFromExt(ext, contentType);
+
+            const resourceLink: ResourceLink = {
+              type: "resource_link",
+              uri,
+              name: path.basename(outPath),
+              mimeType,
+            };
+
+            return {
+              source,
+              filePath: outPath,
+              fileUri,
+              uri,
+              mimeType,
+              resourceLink,
+              downloaded: true,
+            };
+          }),
+        );
+
+        const ok: Array<{
+          source: string;
+          uri: string;
+          file: string;
+          mimeType: string;
+          name: string;
+          downloaded: boolean;
+        }> = [];
+        const content: ContentBlock[] = [];
+        const errors: string[] = [];
+
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          if (result?.status === "fulfilled") {
+            if (tool_result === "resource") {
+              content.push(
+                await buildEmbeddedResourceFromFile({
+                  filePath: result.value.filePath,
+                  uri: result.value.uri,
+                  mimeType: result.value.mimeType,
+                }),
+              );
+            } else {
+              content.push(result.value.resourceLink);
+            }
+            ok.push({
+              source: result.value.source,
+              uri: result.value.uri,
+              file: result.value.fileUri,
+              mimeType: result.value.mimeType,
+              name: path.basename(result.value.filePath),
+              downloaded: result.value.downloaded,
+            });
+          } else if (result?.status === "rejected") {
+            const reason = result.reason;
+            const message = reason instanceof Error ? reason.message : String(reason);
+            errors.push(`[${i}] ${activeSources[i]}: ${message}`);
+          }
+        }
+
+        if (ok.length === 0) {
+          return {
+            content: [{ type: "text", text: `All fetches failed:\n${errors.join("\n")}` }],
+            isError: true,
+          };
+        }
+
+        if (errors.length > 0) {
+          content.push({ type: "text", text: `Errors (${errors.length}/${activeSources.length}):\n${errors.join("\n")}` });
+        }
+
+        const structured = {
+          data: ok,
+          ...(errors.length > 0 ? { errors } : {}),
+        };
+        content.push({ type: "text", text: JSON.stringify(structured, null, 2) });
+
+        log.child("fetch-document").info("processed", { success: ok.length, total: activeSources.length });
+
+        return {
+          content,
+          structuredContent: toStructuredContentRecord(structured),
+        };
+      } catch (err) {
+        return buildErrorResult(err, "fetch-document");
+      }
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // test-images: Debug MCP result format with predictable sample images
   // ---------------------------------------------------------------------------

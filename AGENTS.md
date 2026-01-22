@@ -6,7 +6,7 @@
 
 - OpenAI Images tools (`gpt-image-1.5`, `gpt-image-1`) for image generation and edits/inpainting.
 - OpenAI Videos (Sora) job tooling (`sora-2`, `sora-2-pro`) for video generation and asset downloads.
-- Local/URL image fetching plus optional compression and video input preprocessing via `sharp`.
+- Local/URL fetching for images, videos, and documents with optional compression and video input preprocessing via `sharp`.
 
 The server is designed for production use with strict TypeScript compilation, comprehensive error handling, and flexible output formatting for different MCP clients.
 
@@ -44,6 +44,7 @@ test/
 | `openai-videos-retrieve-content` | Retrieve job assets (video/thumbnail/spritesheet) | `videos.downloadContent` |
 | `fetch-images` | Fetch & compress images from URLs/files | None |
 | `fetch-videos` | Fetch/list videos from URLs/files | None |
+| `fetch-document` | Fetch documents from URLs/files | None |
 | `test-images` | Debug MCP result format | None |
 
 ## Key Design Decisions
@@ -75,6 +76,12 @@ For video download tools, `tool_result` controls `content[]` shape:
   - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
   - `resource`: Emits `EmbeddedResource` blocks with base64 `resource.blob`
 
+For document downloads (`fetch-document`), `tool_result` mirrors video behavior:
+
+- **`tool_result`** (`resource_link` | `resource`, default: `resource_link`)
+  - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
+  - `resource`: Emits `EmbeddedResource` blocks with base64 `resource.blob`
+
 For Google video tools, `response_format` controls `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
 
 Per MCP spec 5.2.6, a `TextContent` block with serialized JSON (URLs in `data[]`) is also included for backward compatibility.
@@ -91,12 +98,13 @@ When a tool writes outputs, the default naming is:
 
 - Images and `fetch-images` use a generated UUID for `<id>`.
 - Videos use the OpenAI `video_id` for `<id>`.
+- Documents use a generated UUID for `<id>` (default naming) or the supplied `file` base path.
 
 `fetch-images` and `fetch-videos` also support an `ids` input to retrieve existing local outputs by ID (matching filenames containing `_{id}_` or `_{id}.` under `MEDIA_GEN_DIRS[0]`). IDs are validated to avoid path/glob injection (no `..`, `*`, `?`, or slashes).
 
 For output location overrides:
 - OpenAI tools always write under `MEDIA_GEN_DIRS[0]` (no `file` parameter).
-- `fetch-images` / `fetch-videos` can still accept `file` when downloading from URLs.
+- `fetch-images` / `fetch-videos` / `fetch-document` can still accept `file` when downloading from URLs.
 
 ### 5. Optional sharp dependency
 The `sharp` library is an optional dependency for image compression and video `input_reference` preprocessing. If unavailable, compression features gracefully degrade and video `input_reference` auto-fit requires `input_reference_fit=match` (caller must provide correctly sized images).

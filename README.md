@@ -22,6 +22,7 @@
 - **Generate videos** via OpenAI Videos (`sora-2`, `sora-2-pro`) with job create/remix/list/retrieve/delete and asset downloads.
 - **Generate videos** via Google GenAI (Veo) with operation polling and file-first downloads.
 - **Fetch & compress images** from HTTP(S) URLs or local file paths with smart size/quality optimization.
+- **Fetch documents** from HTTP(S) URLs or local file paths and return `resource_link`/`resource` outputs.
 - **Debug MCP output shapes** with a `test-images` tool that mirrors production result placement (`content`, `structuredContent`, `toplevel`).
 - **Integrates with**: [fast-agent](https://github.com/strato-space/fast-agent), [Windsurf](https://windsurf.com), [Claude Desktop](https://www.anthropic.com/claude/desktop), [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com/), and any MCP-compatible client.
 
@@ -56,6 +57,9 @@
 - **Fetch videos from URLs or files**  
   [`fetch-videos`](#fetch-videos) tool lists local videos or downloads remote video URLs to disk and returns MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
 
+- **Fetch documents from URLs or files**  
+  [`fetch-document`](#fetch-document) tool downloads remote files or reuses local paths and returns MCP `resource_link` (default) or embedded `resource` blocks (via `tool_result`).
+
 - **Mix and edit up to 16 images**  
   [`openai-images-edit`](#openai-images-edit) accepts `image` as a single string or an array of 1–16 file paths/base64 strings, matching the OpenAI spec for GPT Image models (`gpt-image-1.5`, `gpt-image-1`) image edits.
 
@@ -64,7 +68,7 @@
 
 - **Resource-aware file output with `resource_link`**  
   - Automatic switch from inline base64 to `file` when the total response size exceeds a safe threshold.
-  - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients via `content[]` depending on `tool_result` (`resource_link`/`image` for images, `resource_link`/`resource` for video downloads).
+  - Outputs are written to disk using `output_<time_t>_media-gen__<tool>_<id>.<ext>` filenames (images/documents use a generated UUID; videos use the OpenAI `video_id`) and exposed to MCP clients via `content[]` depending on `tool_result` (`resource_link`/`image` for images, `resource_link`/`resource` for video/document downloads).
 
 - **Built-in test-images tool for MCP client debugging**  
   [`test-images`](#test-images) reads sample images from a configured directory and returns them using the same result-building logic as production tools. Use `tool_result` and `response_format` parameters to test how different MCP clients handle `content[]` and `structuredContent`.
@@ -281,9 +285,9 @@ Field list and limits are configured in `src/lib/logger.ts` via
 
 - **Allowed directories**: All tools are restricted to paths matching `MEDIA_GEN_DIRS`. If unset, defaults to `/tmp/media-gen-mcp` (or `%TEMP%/media-gen-mcp` on Windows).
 - **Test samples**: `MEDIA_GEN_MCP_TEST_SAMPLE_DIR` adds a directory to the allowlist and enables the `test-images` tool.
-- **Local reads**: `fetch-images` accepts file paths (absolute or relative). Relative paths are resolved against the first `MEDIA_GEN_DIRS` entry and must still match an allowed pattern.
+- **Local reads**: `fetch-images` and `fetch-document` accept file paths (absolute or relative). Relative paths are resolved against the first `MEDIA_GEN_DIRS` entry and must still match an allowed pattern.
 - **Remote reads**: HTTP(S) fetches are filtered by `MEDIA_GEN_URLS` patterns. Empty = allow all.
-- **Writes**: `openai-images-generate`, `openai-images-edit`, `fetch-images`, and `fetch-videos` write under the first entry of `MEDIA_GEN_DIRS`. `test-images` is read-only and does not create new files.
+- **Writes**: `openai-images-generate`, `openai-images-edit`, `fetch-images`, `fetch-videos`, and `fetch-document` write under the first entry of `MEDIA_GEN_DIRS`. `test-images` is read-only and does not create new files.
 
 #### Glob patterns
 
@@ -322,7 +326,7 @@ Image tools (`openai-images-*`, `fetch-images`, `test-images`) support two param
 | `tool_result` | `resource_link`, `image` | `resource_link` | Controls `content[]` shape |
 | `response_format` | `url`, `b64_json` | `url` | Controls `structuredContent` shape (OpenAI ImagesResponse format) |
 
-Video download tools (`openai-videos-create` / `openai-videos-remix` when downloading, `openai-videos-retrieve-content`, `google-videos-generate` when downloading, `google-videos-retrieve-content`, `fetch-videos`) support:
+Video/document download tools (`openai-videos-create` / `openai-videos-remix` when downloading, `openai-videos-retrieve-content`, `google-videos-generate` when downloading, `google-videos-retrieve-content`, `fetch-videos`, `fetch-document`) support:
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
@@ -340,6 +344,9 @@ Google video tools (`google-videos-*`) also support:
   - **`resource_link`** (default): Emits `ResourceLink` items with `file://` or `https://` URIs
   - **`image`**: Emits base64 `ImageContent` blocks
 - **Videos** (tools that download video data)
+  - **`resource_link`** (default): Emits `ResourceLink` items with `file://` or `https://` URIs
+  - **`resource`**: Emits `EmbeddedResource` blocks with base64 `resource.blob`
+- **Documents** (`fetch-document`)
   - **`resource_link`** (default): Emits `ResourceLink` items with `file://` or `https://` URIs
   - **`resource`**: Emits `EmbeddedResource` blocks with base64 `resource.blob`
 
@@ -781,6 +788,33 @@ Behavior notes:
 - URL downloads are only allowed when the URL matches `MEDIA_GEN_URLS` (when set).
 - When `n` is provided, it is only honored when the `MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_VIDEOS` environment variable is set to `true`. Otherwise, the call fails with a validation error.
 
+### fetch-document
+
+Fetch documents from HTTP(S) URLs or local file paths.
+
+Arguments (input schema):
+
+- `sources` (string[])
+  - Array of document sources: HTTP(S) URLs or file paths (absolute or relative to the first `MEDIA_GEN_DIRS` entry).
+  - Min: 1, Max: 20 documents.
+- `tool_result` (`"resource_link"` | `"resource"`, default: `"resource_link"`)
+  - Controls `content[]` shape:
+    - `"resource_link"` emits ResourceLink items (file/URL-based)
+    - `"resource"` emits EmbeddedResource blocks with base64 `resource.blob`
+- `file` (string, optional)
+  - Base path for output files (used when downloading from URLs). If multiple documents are downloaded, an index suffix is added.
+
+Output:
+
+- `content`: one `resource_link` (default) or embedded `resource` block per resolved document, plus an optional error summary text block.
+- `structuredContent`: `{ data: [{ source, uri, file, mimeType, name, downloaded }], errors?: string[] }`.
+
+Behavior notes:
+
+- URL downloads are only allowed when the URL matches `MEDIA_GEN_URLS` (when set).
+- Local paths are validated against `MEDIA_GEN_DIRS` and can be provided as `file://` URLs.
+- Default filenames use `output_<time_t>_media-gen__fetch-document_<uuid>.<ext>` when `file` is omitted.
+
 ### test-images
 
 Debug tool for testing MCP result placement without calling OpenAI API.
@@ -905,7 +939,7 @@ This pattern provides:
 - **Runtime validation** — Zod `.parse()` ensures all inputs match the schema before processing.
 - **MCP SDK compatibility** — `inputSchema: schema.shape` provides the JSON Schema for tool registration.
 
-All tools (`openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `test-images`) follow this pattern.
+All tools (`openai-images-*`, `openai-videos-*`, `fetch-images`, `fetch-videos`, `fetch-document`, `test-images`) follow this pattern.
 
 ---
 
@@ -925,11 +959,12 @@ This MCP server exposes the following tools with annotation hints:
 | **openai-videos-retrieve-content** | `true` | `false` | `false` | `true` |
 | **fetch-images** | `true` | `false` | `false` | `false` |
 | **fetch-videos** | `true` | `false` | `false` | `false` |
+| **fetch-document** | `true` | `false` | `false` | `false` |
 | **test-images** | `true` | `false` | `false` | `false` |
 
 These hints help MCP clients understand that these tools:
 - may invoke external APIs or read external resources (open world),
-- do not modify existing project files or user data; they only create new media files (images/videos) in configured output directories,
+- do not modify existing project files or user data; they only create new media files (images/videos/documents) in configured output directories,
 - may produce different outputs on each call, even with the same inputs.
 
 Because `readOnlyHint` is set to `true` for most tools, MCP platforms (including chatgpt.com) can treat this server as logically read-only and usually will not show "this tool can modify your files" warnings.
