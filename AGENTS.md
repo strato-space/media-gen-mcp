@@ -117,6 +117,10 @@ All strict checks are enabled in `tsconfig.json` and used by `npm run build` / `
 - `noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns`, `noFallthroughCasesInSwitch`
 - `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noPropertyAccessFromIndexSignature`
 
+### 7. Fetch-images argument precedence
+- If `sources` is provided, `fetch-images` ignores `ids`/`n` and proceeds with the URL/path list.
+- Conflicting parameters are logged as warnings to aid client diagnostics.
+
 ## Environment Variables
 
 | Variable | Required | Description |

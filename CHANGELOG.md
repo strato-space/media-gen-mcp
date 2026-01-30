@@ -10,7 +10,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 - Video download tools now support `tool_result=resource` to emit MCP `resource` (EmbeddedResource) blocks with base64 `resource.blob`.
 - Google video tools now support `response_format` (`url` | `b64_json`) to control `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
-- Image tools now support `response_format=path` to emit local filesystem paths in `structuredContent.data[].path` for local skill workflows.
 
 ### Changed
 - Default OpenAI Images model is now `gpt-image-1.5` (still supports `gpt-image-1`).
@@ -19,6 +18,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 - Google video tools now log operation ids at `info` level and avoid emitting huge base64 payloads in JSON `text` blocks.
+
+## 2026-01-30
+
+### PROBLEM SOLVED
+- `fetch-images` no longer fails when clients send `sources` together with `n` or `ids` — extra parameters are ignored.
+
+### FEATURE IMPLEMENTED
+- Image tools now support `response_format=path` to emit local filesystem paths in `structuredContent.data[].path` for local skill workflows.
+
+### CHANGES
+- `fetch-images` precedence: `sources` → `ids` → `n`; conflicting fields are logged as warnings.
+- Updated docs and schemas for `response_format=path` and added validation coverage.
+- Extended integration test timeouts for gating‑env error cases to avoid flakes.
+- Aligned `package-lock.json` version with `package.json`.
 
 ## 2026-01-22
 

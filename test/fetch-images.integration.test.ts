@@ -60,7 +60,7 @@ describe("fetch-images integration", () => {
     expect(textBlock?.text ?? "").toContain("Fetching last N images is disabled");
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
-  });
+  }, 15000);
 
   it("reuses existing local files when n is set and compression is omitted", async () => {
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));

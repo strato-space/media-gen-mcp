@@ -2599,15 +2599,32 @@ function buildImageToolResult(
         const hasSources = Array.isArray(sources) && sources.length > 0;
         const hasIds = Array.isArray(ids) && ids.length > 0;
         const hasN = typeof n === "number";
-        if (hasSources && hasN) throw new Error("'sources' and 'n' are mutually exclusive");
-        if (hasSources && hasIds) throw new Error("'sources' and 'ids' are mutually exclusive");
-        if (hasIds && hasN) throw new Error("'ids' and 'n' are mutually exclusive");
-        if (hasIds && typeof file === "string") throw new Error("'file' is not supported when using 'ids' (no new files are created)");
-        if (hasIds && compression) throw new Error("'compression' is not supported when using 'ids' (returns existing files as-is)");
+        const ignoredParams: string[] = [];
+        let effectiveIds = ids;
+        let effectiveN = n;
+
+        if (hasSources) {
+          if (hasIds) ignoredParams.push("ids");
+          if (hasN) ignoredParams.push("n");
+          effectiveIds = undefined;
+          effectiveN = undefined;
+        }
+
+        const hasEffectiveIds = Array.isArray(effectiveIds) && effectiveIds.length > 0;
+        const effectiveNValue = typeof effectiveN === "number" ? effectiveN : undefined;
+        const hasEffectiveN = effectiveNValue !== undefined;
+
+        if (hasEffectiveIds && hasEffectiveN) throw new Error("'ids' and 'n' are mutually exclusive");
+        if (hasEffectiveIds && typeof file === "string") throw new Error("'file' is not supported when using 'ids' (no new files are created)");
+        if (hasEffectiveIds && compression) throw new Error("'compression' is not supported when using 'ids' (returns existing files as-is)");
+
+        if (ignoredParams.length > 0) {
+          log.child("fetch-images").warn("ignored_params", { ignored: ignoredParams, reason: "sources provided" });
+        }
 
         let activeSources: string[] = [];
 
-        if (hasN) {
+        if (hasEffectiveN) {
           if (process.env["MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES"] !== "true") {
             throw new Error("Fetching last N images is disabled by MEDIA_GEN_MCP_ALLOW_FETCH_LAST_N_IMAGES");
           }
@@ -2626,7 +2643,7 @@ function buildImageToolResult(
           }
 
           candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-          activeSources = candidates.slice(0, n).map((c) => c.path);
+          activeSources = candidates.slice(0, effectiveNValue).map((c) => c.path);
 
           if (activeSources.length === 0) {
             return {
@@ -2634,10 +2651,10 @@ function buildImageToolResult(
               isError: true,
             };
           }
-        } else if (hasIds) {
+        } else if (hasEffectiveIds) {
           const root = primaryOutputDir;
           const imageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
-          const idList = ids ?? [];
+          const idList = effectiveIds ?? [];
           const resolved = await resolveFilesByIds({ rootDir: root, ids: idList, allowedExtensions: imageExtensions });
           activeSources = resolved.orderedFiles;
           if (activeSources.length === 0) {

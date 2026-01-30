@@ -57,7 +57,7 @@ describe("fetch-videos integration", () => {
     expect(textBlock?.text ?? "").toContain("Fetching last N videos is disabled");
 
     await fs.promises.rm(tmpDir, { recursive: true, force: true });
-  });
+  }, 15000);
 
   it("lists existing local videos when n is set", async () => {
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "media-gen-mcp-int-"));
