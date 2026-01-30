@@ -111,10 +111,10 @@ export function parseImageResponse(
 }
 
 // Helper: determine effective output mode and file path
-// responseFormat: "url" -> file/URL-based output, "b64_json" -> inline base64
+// responseFormat: "url" | "path" -> file/URL-based output, "b64_json" -> inline base64
 export function resolveOutputPath(
   images: ImageData[],
-  responseFormat: "url" | "b64_json",
+  responseFormat: ResponseFormatType,
   file: string | undefined,
   toolPrefix: string,
   options?: { maxResponseSize?: number; outputDir?: string },
@@ -153,7 +153,7 @@ export function resolveOutputPath(
 export type ToolResultType = "resource_link" | "image";
 
 // response_format types: controls structuredContent shape
-export type ResponseFormatType = "url" | "b64_json";
+export type ResponseFormatType = "url" | "b64_json" | "path";
 
 // Resource link type (MCP SDK 2025-11-25 spec)
 export interface ResourceLinkItem {

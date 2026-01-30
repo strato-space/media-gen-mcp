@@ -464,7 +464,7 @@ function parseImageResponse(data: ImageApiDataItem[], format: ImageFormat): Imag
 }
 
 // Helper: determine effective output mode and file path
-// responseFormat: "url" -> file/URL-based output, "b64_json" -> inline base64
+// responseFormat: "url" | "path" -> file/URL-based output, "b64_json" -> inline base64
 function sanitizeForFilename(value: string): string {
   // Keep only broadly safe filename characters.
   return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
@@ -483,7 +483,7 @@ function buildDefaultOutputBaseName(opts: { methodName: string; id: string; time
 
 function resolveOutputPath(
   images: ImageData[],
-  responseFormat: "url" | "b64_json",
+  responseFormat: ResponseFormatType,
   file: string | undefined,
   methodName: string,
 ): { effectiveOutput: string; effectiveFileOutput: string } {
@@ -1178,7 +1178,7 @@ type ContentBlock = TextContent | ImageContent | ResourceLink | EmbeddedResource
 // tool_result: controls content[] shape (resource_link vs image)
 // response_format: controls structuredContent shape (url vs b64_json)
 type ToolResultType = "resource_link" | "image";
-type ResponseFormatType = "url" | "b64_json";
+type ResponseFormatType = "url" | "path" | "b64_json";
 
 // Raw OpenAI API response shape (for "api" placement mode)
 interface OpenAIImageApiResponse {
@@ -1212,7 +1212,7 @@ interface OpenAIImageApiResponse {
 // Helper: build MCP tool result for image responses
 // New design per MCP 2025-11-25 spec 5.2.6:
 // - content[] is built based on tool_result param (resource_link or image)
-// - structuredContent always contains OpenAI ImagesResponse format (data[].url or data[].b64_json)
+// - structuredContent always contains OpenAI ImagesResponse format (data[].url, data[].path, or data[].b64_json)
 // - A TextContent block with serialized JSON (with URLs) for backward compatibility
 function buildImageToolResult(
   images: ImageData[],
@@ -1264,7 +1264,7 @@ function buildImageToolResult(
   content.push(...revisedPromptItems);
 
   // 2. Build structuredContent with OpenAI ImagesResponse format
-  // data[] contains either url or b64_json based on response_format
+  // data[] contains url, path, or b64_json based on response_format
   const apiResponse: OpenAIImageApiResponse = rawApiResponse
     ? { ...rawApiResponse }
     : {
@@ -1272,17 +1272,22 @@ function buildImageToolResult(
         data: [],
       };
 
-  const dataItems: Array<{ b64_json?: string; url?: string; revised_prompt?: string }> = [];
+  const dataItems: Array<{ b64_json?: string; url?: string; path?: string; revised_prompt?: string }> = [];
   const maxLen = Math.max(images.length, urls.length, files.length, resourceLinks.length);
 
   for (let i = 0; i < maxLen; i++) {
-    const item: { b64_json?: string; url?: string; revised_prompt?: string } = {};
+    const item: { b64_json?: string; url?: string; path?: string; revised_prompt?: string } = {};
 
     if (responseFormat === "b64_json") {
       // Put base64 in structuredContent
       const img = images[i];
       if (img) {
         item.b64_json = img.b64;
+      }
+    } else if (responseFormat === "path") {
+      const fileVal = files[i];
+      if (fileVal) {
+        item.path = fileVal;
       }
     } else {
       // Put URL in structuredContent (prefer HTTP URL, fallback to file:// URI)
@@ -1304,7 +1309,7 @@ function buildImageToolResult(
       item.revised_prompt = revisedPrompt;
     }
 
-    if (item.b64_json || item.url) {
+    if (item.b64_json || item.url || item.path) {
       dataItems.push(item);
     }
   }
@@ -1400,8 +1405,8 @@ function buildImageToolResult(
 	    user: z.string().optional(),
 	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
 	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-	    response_format: z.enum(["url", "b64_json"]).default("url")
-	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+	    response_format: z.enum(["url", "path", "b64_json"]).default("url")
+	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'path' emits data[].path, 'b64_json' emits data[].b64_json."),
 	  });
 
   // Full schema with refinement for validation inside the handler
@@ -1413,7 +1418,7 @@ function buildImageToolResult(
 	    "openai-images-generate",
 	    {
 	      title: "OpenAI Images Generate",
-	      description: "Generate images from text prompts using OpenAI gpt-image-1.5 (default) or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
+	      description: "Generate images from text prompts using OpenAI gpt-image-1.5 (default) or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url, data[].path, or data[].b64_json based on response_format param).",
 	      inputSchema: openaiImagesGenerateBaseSchema.shape,
 	      annotations: openaiToolAnnotations,
 	    },
@@ -1539,8 +1544,8 @@ function buildImageToolResult(
 		    user: z.string().optional().describe("Optional user identifier for OpenAI monitoring."),
 	    tool_result: z.enum(["resource_link", "image"]).default("resource_link")
 	      .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-	    response_format: z.enum(["url", "b64_json"]).default("url")
-	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+	    response_format: z.enum(["url", "path", "b64_json"]).default("url")
+	      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'path' emits data[].path, 'b64_json' emits data[].b64_json."),
 	  });
 
   // Full schema with refinement for validation inside the handler
@@ -1553,7 +1558,7 @@ function buildImageToolResult(
 	    "openai-images-edit",
 	    {
 	      title: "OpenAI Images Edit",
-	      description: "Edit images (inpainting, outpainting, compositing) from 1 to 16 inputs using OpenAI gpt-image-1.5 (default) or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
+	      description: "Edit images (inpainting, outpainting, compositing) from 1 to 16 inputs using OpenAI gpt-image-1.5 (default) or gpt-image-1. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url, data[].path, or data[].b64_json based on response_format param).",
 	      inputSchema: openaiImagesEditBaseSchema.shape,
 	      annotations: openaiToolAnnotations,
 	    },
@@ -2570,8 +2575,8 @@ function buildImageToolResult(
     }).optional().describe("Compression options. If omitted, no compression is applied."),
     tool_result: z.enum(["resource_link", "image"]).default("resource_link")
       .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-    response_format: z.enum(["url", "b64_json"]).default("url")
-      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+    response_format: z.enum(["url", "path", "b64_json"]).default("url")
+      .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'path' emits data[].path, 'b64_json' emits data[].b64_json."),
     file: z.string().optional()
       .describe("Base path for output files, absolute or relative to the first MEDIA_GEN_DIRS entry. If multiple images, index suffix is added."),
   });
@@ -2582,7 +2587,7 @@ function buildImageToolResult(
     "fetch-images",
     {
       title: "Fetch Images",
-      description: "Fetch and process images from URLs or local file paths. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param).",
+      description: "Fetch and process images from URLs or local file paths. Returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url, data[].path, or data[].b64_json based on response_format param).",
       inputSchema: fetchImagesSchema.shape,
       annotations: localToolAnnotations,
     },
@@ -3476,7 +3481,7 @@ function buildImageToolResult(
       "test-images",
       {
         title: "Test Images",
-        description: `Debug MCP result format using existing sample files from ${testSampleDir}. Reads up to 10 images and returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url or data[].b64_json based on response_format param). No new files are created.`,
+        description: `Debug MCP result format using existing sample files from ${testSampleDir}. Reads up to 10 images and returns MCP CallToolResult with content[] (ResourceLink or ImageContent based on tool_result param) and structuredContent (OpenAI ImagesResponse format with data[].url, data[].path, or data[].b64_json based on response_format param). No new files are created.`,
         inputSchema: testImagesSchema.shape,
         annotations: localToolAnnotations,
       },

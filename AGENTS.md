@@ -65,9 +65,10 @@ For image tools, two parameters standardize output shapes:
   - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
   - `image`: Emits base64 `ImageContent` blocks
 
-- **`response_format`** (`url` | `b64_json`, default: `url`): Controls `structuredContent` shape
+- **`response_format`** (`url` | `path` | `b64_json`, default: `url`): Controls `structuredContent` shape for image tools
   - `structuredContent` always contains OpenAI ImagesResponse format
   - `url`: `data[].url` contains file URLs
+  - `path`: `data[].path` contains local filesystem paths
   - `b64_json`: `data[].b64_json` contains base64 data
 
 For video download tools, `tool_result` controls `content[]` shape:
@@ -82,7 +83,7 @@ For document downloads (`fetch-document`), `tool_result` mirrors video behavior:
   - `resource_link`: Emits `ResourceLink` items with `file://` or `https://` URIs
   - `resource`: Emits `EmbeddedResource` blocks with base64 `resource.blob`
 
-For Google video tools, `response_format` controls `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
+For Google video tools, `response_format` controls `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`) and remains `url` | `b64_json`.
 
 Per MCP spec 5.2.6, a `TextContent` block with serialized JSON (URLs in `data[]`) is also included for backward compatibility.
 
@@ -210,7 +211,7 @@ npm run test:watch   # Watch mode
 
 ### Manual Testing
 1. Use `test-images` with sample images to verify result placement
-2. Test `tool_result` (images: `resource_link` vs `image`; videos: `resource_link` vs `resource`) and `response_format` (`url` vs `b64_json`) with your target MCP client
+2. Test `tool_result` (images: `resource_link` vs `image`; videos: `resource_link` vs `resource`) and `response_format` (images: `url` | `path` | `b64_json`) with your target MCP client
 3. Verify compression with large images (>800KB)
 4. For videos, validate `wait_for_completion` timeouts and `openai-videos-retrieve-content` outputs (video/thumbnail/spritesheet)
 

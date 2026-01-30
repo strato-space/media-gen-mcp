@@ -324,7 +324,7 @@ Image tools (`openai-images-*`, `fetch-images`, `test-images`) support two param
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
 | `tool_result` | `resource_link`, `image` | `resource_link` | Controls `content[]` shape |
-| `response_format` | `url`, `b64_json` | `url` | Controls `structuredContent` shape (OpenAI ImagesResponse format) |
+| `response_format` | `url`, `path`, `b64_json` | `url` | Controls `structuredContent` shape (OpenAI ImagesResponse format) |
 
 Video/document download tools (`openai-videos-create` / `openai-videos-remix` when downloading, `openai-videos-retrieve-content`, `google-videos-generate` when downloading, `google-videos-retrieve-content`, `fetch-videos`, `fetch-document`) support:
 
@@ -358,12 +358,13 @@ For OpenAI images, `structuredContent` always contains an OpenAI ImagesResponse-
 {
   "created": 1234567890,
   "data": [
-    { "url": "https://..." } // or { "b64_json": "..." } depending on response_format
+    { "url": "https://..." } // or { "path": "/abs/path.png" } / { "b64_json": "..." } depending on response_format
   ]
 }
 ```
 
 - **`url`** (default): `data[].url` contains file URLs
+- **`path`**: `data[].path` contains local filesystem paths
 - **`b64_json`**: `data[].b64_json` contains base64-encoded image data
 
 For Google videos, `response_format` controls whether `structuredContent.response.generatedVideos[].video` prefers:
@@ -441,9 +442,10 @@ Arguments (input schema):
 - `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1536")
 - `user` (string, optional)
   - User identifier forwarded to OpenAI for monitoring.
-- `response_format` ("url" | "b64_json", default: "url")
+- `response_format` ("url" | "path" | "b64_json", default: "url")
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
+    - `"path"`: local filesystem paths in `data[].path` (for local skill workflows).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
   - `tool_result` ("resource_link" | "image", default: "resource_link")
     - Controls `content[]` shape:
@@ -514,9 +516,10 @@ Arguments (input schema):
 - `size` ("1024x1024" | "1536x1024" | "1024x1536" | "auto", default: "1024x1536")
 - `user` (string, optional)
   - User identifier forwarded to OpenAI for monitoring.
-- `response_format` ("url" | "b64_json", default: "url")
+- `response_format` ("url" | "path" | "b64_json", default: "url")
   - Response format (aligned with OpenAI Images API):
     - `"url"`: file/URL-based output (resource_link items, `image_url` fields, `data[].url` in `api` placement).
+    - `"path"`: local filesystem paths in `data[].path` (for local skill workflows).
     - `"b64_json"`: inline base64 image data (image content, `data[].b64_json` in `api` placement).
 - `tool_result` ("resource_link" | "image", default: "resource_link")
   - Controls `content[]` shape:
@@ -733,8 +736,8 @@ Arguments (input schema):
   - `max_bytes` (integer, optional): Target max file size in bytes. Default: 819200 (800KB).
   - `quality` (integer, optional): JPEG/WebP quality 1-100. Default: 85.
   - `format` ("jpeg" | "png" | "webp", optional): Output format. Default: jpeg.
-- `response_format` ("url" | "b64_json", default: "url")
-  - Response format: file/URL-based (`url`) or inline base64 (`b64_json`).
+- `response_format` ("url" | "path" | "b64_json", default: "url")
+  - Response format: file/URL-based (`url`), local path (`path`), or inline base64 (`b64_json`).
 - `tool_result` ("resource_link" | "image", default: "resource_link")
   - Controls `content[]` shape:
     - `"resource_link"` emits ResourceLink items (file/URL-based)
@@ -823,7 +826,7 @@ Debug tool for testing MCP result placement without calling OpenAI API.
 
 Arguments (input schema):
 
-- `response_format` ("url" | "b64_json", default: "url")
+- `response_format` ("url" | "path" | "b64_json", default: "url")
 - `result_placement` ("content" | "api" | "structured" | "toplevel" or array of these, optional)
   - Override `MEDIA_GEN_MCP_RESULT_PLACEMENT` for this call.
 - `compression` (object, optional)
@@ -847,6 +850,7 @@ Behavior notes:
 - When `result_placement` includes `"api"`, the tool returns a **mock OpenAI Images API-style object**:
   - Top level: `created`, `data[]`, `background`, `output_format`, `size`, `quality`.
   - For `response_format: "b64_json"` each `data[i]` contains `b64_json`.
+  - For `response_format: "path"` each `data[i]` contains `path`.
   - For `response_format: "url"` each `data[i]` contains `url` instead of `b64_json`.
 
 #### Debug CLI helpers for `test-images`
@@ -857,9 +861,10 @@ For local debugging there are two helper scripts that call `test-images` directl
   `CallToolResult` as seen by the MCP SDK client. Usage:
 
   ```sh
-  npm run test-images -- [placement] [--response_format url|b64_json]
+  npm run test-images -- [placement] [--response_format url|path|b64_json]
   # examples:
   # npm run test-images -- structured --response_format b64_json
+  # npm run test-images -- structured --response_format path
   # npm run test-images -- structured --response_format url
   ```
 

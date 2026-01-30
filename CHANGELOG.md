@@ -10,6 +10,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 - Video download tools now support `tool_result=resource` to emit MCP `resource` (EmbeddedResource) blocks with base64 `resource.blob`.
 - Google video tools now support `response_format` (`url` | `b64_json`) to control `structuredContent.response.generatedVideos[].video` fields (`uri` vs `videoBytes`).
+- Image tools now support `response_format=path` to emit local filesystem paths in `structuredContent.data[].path` for local skill workflows.
 
 ### Changed
 - Default OpenAI Images model is now `gpt-image-1.5` (still supports `gpt-image-1`).

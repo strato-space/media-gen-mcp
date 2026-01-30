@@ -33,9 +33,14 @@ export type VideoToolResultType = z.infer<typeof videoToolResultEnum>;
 
 // response_format schema: controls structuredContent shape (OpenAI Images API format)
 // url      -> data[].url in structuredContent
+// path     -> data[].path in structuredContent (local filesystem path)
 // b64_json -> data[].b64_json in structuredContent
-const responseFormatEnum = z.enum(["url", "b64_json"]);
-export type ResponseFormatType = z.infer<typeof responseFormatEnum>;
+const imageResponseFormatEnum = z.enum(["url", "path", "b64_json"]);
+export type ResponseFormatType = z.infer<typeof imageResponseFormatEnum>;
+
+// response_format schema for Google video tools
+const videoResponseFormatEnum = z.enum(["url", "b64_json"]);
+export type VideoResponseFormatType = z.infer<typeof videoResponseFormatEnum>;
 
 const openaiImageModelEnum = z.enum(["gpt-image-1.5", "gpt-image-1"]);
 export type OpenAIImageModelType = z.infer<typeof openaiImageModelEnum>;
@@ -193,7 +198,7 @@ export const googleVideosGenerateSchema = z.object({
 
   tool_result: videoToolResultEnum.default("resource_link").optional()
     .describe("Controls content[] shape when downloading: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
-  response_format: responseFormatEnum.default("url").optional()
+  response_format: videoResponseFormatEnum.default("url").optional()
     .describe("Controls structuredContent video fields: 'url' (default) prefers video.uri, 'b64_json' prefers video.videoBytes."),
 }).superRefine((val, ctx) => {
   const hasPrompt = typeof val.prompt === "string" && val.prompt.trim().length > 0;
@@ -219,7 +224,7 @@ export const googleVideosGenerateSchema = z.object({
 
 export const googleVideosRetrieveOperationSchema = z.object({
   operation_name: nonEmptyString.describe("Google video operation name/id."),
-  response_format: responseFormatEnum.default("url").optional()
+  response_format: videoResponseFormatEnum.default("url").optional()
     .describe("Controls structuredContent video fields: 'url' (default) prefers video.uri, 'b64_json' prefers video.videoBytes."),
 });
 
@@ -229,7 +234,7 @@ export const googleVideosRetrieveContentSchema = z.object({
     .describe("Which generatedVideos[index] to download (default: 0)."),
   tool_result: videoToolResultEnum.default("resource_link").optional()
     .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'resource' emits EmbeddedResource blocks with base64 blob."),
-  response_format: responseFormatEnum.default("url").optional()
+  response_format: videoResponseFormatEnum.default("url").optional()
     .describe("Controls structuredContent video fields: 'url' (default) prefers video.uri, 'b64_json' prefers video.videoBytes."),
 });
 
@@ -264,8 +269,8 @@ export const openaiImagesGenerateBaseSchema = z.object({
 
 // Full openai-images-generate schema with response_format
 export const openaiImagesGenerateSchema = openaiImagesGenerateBaseSchema.extend({
-  response_format: responseFormatEnum.default("url")
-    .describe("Response format: url (file/URL-based) or b64_json (inline base64). Default: url."),
+  response_format: imageResponseFormatEnum.default("url")
+    .describe("Response format: url (file/URL-based), path (local file path), or b64_json (inline base64). Default: url."),
 });
 
 // openai-images-edit base schema
@@ -296,8 +301,8 @@ export const openaiImagesEditBaseSchema = z.object({
 });
 
 export const openaiImagesEditSchema = openaiImagesEditBaseSchema.extend({
-  response_format: responseFormatEnum.default("url")
-    .describe("Response format: url (file/URL-based) or b64_json (inline base64). Default: url."),
+  response_format: imageResponseFormatEnum.default("url")
+    .describe("Response format: url (file/URL-based), path (local file path), or b64_json (inline base64). Default: url."),
 });
 
 // fetch-images schema
@@ -305,8 +310,8 @@ export const fetchImagesSchema = z.object({
   images: z.array(z.string()).min(1).max(20)
     .describe("Array of image URLs or local file paths (1-20)."),
   compression: compressionSchema,
-  response_format: responseFormatEnum.default("url")
-    .describe("Response format for fetched images: url (file/URL-based) or b64_json (inline base64). Default: url."),
+  response_format: imageResponseFormatEnum.default("url")
+    .describe("Response format for fetched images: url (file/URL-based), path (local file path), or b64_json (inline base64). Default: url."),
   file: z.string().optional()
     .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
     .describe("Base path for output files. If multiple images, index suffix is added."),
@@ -336,8 +341,8 @@ export const fetchImagesClientSchema = z.object({
     format: z.enum(["jpeg", "png", "webp"]).optional()
       .describe("Output format. Default: jpeg (best compression)."),
   }).optional().describe("Compression options. If omitted, no compression is applied."),
-  response_format: responseFormatEnum.default("url")
-    .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+  response_format: imageResponseFormatEnum.default("url")
+    .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'path' emits data[].path, 'b64_json' emits data[].b64_json."),
   file: z.string().optional()
     .refine((val) => !val || isAbsolutePath(val), { message: "file must be an absolute path if provided" })
     .describe("Base path for output files, absolute or relative to the first MEDIA_GEN_DIRS entry. If multiple images, index suffix is added."),
@@ -349,8 +354,8 @@ export const fetchImagesClientSchema = z.object({
 export const testImagesSchema = z.object({
   tool_result: toolResultEnum.default("resource_link").optional()
     .describe("Controls content[] shape: 'resource_link' (default) emits ResourceLink items, 'image' emits base64 ImageContent blocks."),
-  response_format: responseFormatEnum.default("url")
-    .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'b64_json' emits data[].b64_json."),
+  response_format: imageResponseFormatEnum.default("url")
+    .describe("Controls structuredContent shape: 'url' (default) emits data[].url, 'path' emits data[].path, 'b64_json' emits data[].b64_json."),
   compression: compressionSchema,
 });
 

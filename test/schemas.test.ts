@@ -70,6 +70,12 @@ describe("schemas module", () => {
       }
     });
 
+    it("validates response_format options", () => {
+      expect(openaiImagesGenerateSchema.safeParse({ prompt: "test", response_format: "url" }).success).toBe(true);
+      expect(openaiImagesGenerateSchema.safeParse({ prompt: "test", response_format: "path" }).success).toBe(true);
+      expect(openaiImagesGenerateSchema.safeParse({ prompt: "test", response_format: "b64_json" }).success).toBe(true);
+    });
+
     it("rejects empty prompt", () => {
       const input = { prompt: "" };
       const result = openaiImagesGenerateSchema.safeParse(input);
@@ -141,6 +147,12 @@ describe("schemas module", () => {
       const result = openaiImagesEditSchema.safeParse(input);
 
       expect(result.success).toBe(true);
+    });
+
+    it("validates response_format options", () => {
+      expect(openaiImagesEditSchema.safeParse({ prompt: "test", image: "/tmp/a.png", response_format: "url" }).success).toBe(true);
+      expect(openaiImagesEditSchema.safeParse({ prompt: "test", image: "/tmp/a.png", response_format: "path" }).success).toBe(true);
+      expect(openaiImagesEditSchema.safeParse({ prompt: "test", image: "/tmp/a.png", response_format: "b64_json" }).success).toBe(true);
     });
 
     it("validates with mask", () => {
@@ -465,6 +477,12 @@ describe("schemas module", () => {
       expect(fetchImagesSchema.safeParse({ images: ["https://example.com/img.png"], tool_result: "resource_link" }).success).toBe(true);
       expect(fetchImagesSchema.safeParse({ images: ["https://example.com/img.png"], tool_result: "image" }).success).toBe(true);
     });
+
+    it("validates response_format options", () => {
+      expect(fetchImagesSchema.safeParse({ images: ["https://example.com/img.png"], response_format: "url" }).success).toBe(true);
+      expect(fetchImagesSchema.safeParse({ images: ["https://example.com/img.png"], response_format: "path" }).success).toBe(true);
+      expect(fetchImagesSchema.safeParse({ images: ["https://example.com/img.png"], response_format: "b64_json" }).success).toBe(true);
+    });
   });
 
   describe("fetchImagesClientSchema (sources + ids + n)", () => {
@@ -528,6 +546,14 @@ describe("schemas module", () => {
       expect(result.success).toBe(true);
     });
 
+    it("accepts response_format path", () => {
+      const result = fetchImagesClientSchema.safeParse({
+        sources: ["https://example.com/img.png"],
+        response_format: "path",
+      });
+      expect(result.success).toBe(true);
+    });
+
     it("accepts both sources and n structurally (mutual exclusivity enforced in handler)", () => {
       const input: FetchImagesClientArgs = {
         sources: ["https://example.com/img.png"],
@@ -565,6 +591,7 @@ describe("schemas module", () => {
     it("validates response_format options", () => {
       expect(testImagesSchema.safeParse({ response_format: "b64_json" }).success).toBe(true);
       expect(testImagesSchema.safeParse({ response_format: "url" }).success).toBe(true);
+      expect(testImagesSchema.safeParse({ response_format: "path" }).success).toBe(true);
     });
   });
 
