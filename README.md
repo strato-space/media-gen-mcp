@@ -1167,3 +1167,8 @@ Both `openai-images-generate` and `openai-images-edit` now attach `files` + `url
 - Built with [@modelcontextprotocol/sdk](https://www.npmjs.com/package/@modelcontextprotocol/sdk)
 - Uses [openai](https://www.npmjs.com/package/openai) Node.js SDK 
 - Refactoring and MCP spec alignment assisted by [Windsurf](https://windsurf.com) and [GPT-5 High Reasoning](https://openai.com).
+
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/strato-space-media-gen-mcp).
+
